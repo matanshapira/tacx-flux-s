@@ -8,6 +8,13 @@ venv/
 env/
 ENV/
 
+# Flux S runtime data (personal settings, rides, workouts, logs)
+flux_config.json
+Rides/
+Workouts/
+Logs/
+*.zip
+
 # OS / Editor
 .DS_Store
 Thumbs.db

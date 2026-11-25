@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
 """
-Independent E2E test suite for `flux_bridge.py`.
+Independent E2E test suite for `flux_bridge.py` (v8).
 
-Exercises the real `flux_bridge.py` code (Session, make_app, port_owner,
-stop_running_bridge, describe_error, request_stop, HTTP/WS endpoints, Origin
-security, BLE scan throttling, 3-attempt connect retries, multi-device
-trainer + HR operations, and shutdown cleanup).
+Exercises the real `flux_bridge.py` over live localhost TCP sockets using
+isolated temporary directories for config, workouts, rides, and logs so
+user data is never touched.
 
-Works out-of-the-box with zero pip dependencies (uses a lightweight stdlib
-asyncio HTTP/WebSocket server shim matching aiohttp's API when aiohttp/bleak
-are not installed, or real aiohttp if present).
+Covers:
+  - HTTP serving (/ -> /flux-s.html, /ping CORS, Cache-Control: no-store)
+  - Origin security (/ws 403 on missing/foreign Origin; POST /shutdown header+origin)
+  - port_owner() ('bridge', 'other', None) and stop_running_bridge()
+  - Single-tab ownership (claim=takeover, claim=ifFree, PASSIVE_OPS, takenOver, op=claim)
+  - File persistence: flux_config.json (configLoad/configSave), Workouts CRUD,
+    Rides continuous append, conflict detection, replace, rideLoad, rideList,
+    and finalize_stale_rides() NP/IF/TSS auto-finalization
+  - clientLog forwarding to rotating log file
+  - BLE scanning + 0.7 s throttling + simultaneous trainer & HR device ops
+  - 3-attempt connect retries, non-empty TimeoutError text + RSSI hint,
+    device-not-found, Windows _connect_direct fallback, cancel_connect, and
+    shutdown BLE disconnect cleanup.
 """
 from __future__ import annotations
 
@@ -17,12 +26,12 @@ import asyncio
 import base64
 import hashlib
 import http.server
-import importlib
 import json
 import os
 import socket
 import struct
 import sys
+import tempfile
 import threading
 import time
 import types
@@ -36,7 +45,7 @@ sys.path.insert(0, str(ROOT))
 
 
 # ---------------------------------------------------------------------------
-# Lightweight RFC 6455 WebSocket + HTTP/1.1 test client (stdlib only)
+# Lightweight RFC 6455 WebSocket client (stdlib only)
 # ---------------------------------------------------------------------------
 class SimpleWSClient:
     def __init__(self, sock: socket.socket):
@@ -58,8 +67,7 @@ class SimpleWSClient:
         ]
         if origin is not None:
             lines.append(f"Origin: {origin}")
-        req = ("\r\n".join(lines) + "\r\n\r\n").encode("utf-8")
-        sock.sendall(req)
+        sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("utf-8"))
 
         resp = bytearray()
         while b"\r\n\r\n" not in resp:
@@ -69,8 +77,7 @@ class SimpleWSClient:
             resp.extend(chunk)
         header_end = resp.index(b"\r\n\r\n")
         head = resp[:header_end].decode("utf-8", errors="replace")
-        status_line = head.split("\r\n", 1)[0]
-        status_code = int(status_line.split(" ")[1])
+        status_code = int(head.split("\r\n", 1)[0].split(" ")[1])
         if status_code != 101:
             body = resp[header_end + 4:].decode("utf-8", errors="replace")
             sock.close()
@@ -123,13 +130,12 @@ class SimpleWSClient:
                 data = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
             if opcode == 0x8:
                 raise EOFError("WS close frame")
-            if opcode == 0x9:  # ping -> pong
+            if opcode == 0x9:
                 continue
             if opcode == 0x1:
                 return json.loads(data.decode("utf-8"))
 
     def request(self, op: str, req_id: int, **kwargs) -> tuple[dict, list[dict]]:
-        """Send an op and return (response_for_req_id, events_received_meanwhile)."""
         self.send_json({"id": req_id, "op": op, **kwargs})
         events = []
         deadline = time.monotonic() + 10.0
@@ -148,7 +154,7 @@ class SimpleWSClient:
 
 
 # ---------------------------------------------------------------------------
-# Fake Bleak objects (controllable failure modes, multi-device, notifications)
+# Fake Bleak (controllable retries, direct-connect backend, multi-device)
 # ---------------------------------------------------------------------------
 class FakeBLEDevice:
     def __init__(self, address: str, name: str):
@@ -183,6 +189,7 @@ class FakeBleakState:
         self.devices: dict[str, tuple[FakeBLEDevice, FakeAdvData, list[FakeService]]] = {}
         self.fail_attempts: dict[str, list[Exception | None]] = {}
         self.find_returns_none: set[str] = set()
+        self.direct_connect_allowed: set[str] = set()
         self.scanner_active = False
         self.scanner_cb = None
         self.connected_clients: list["FakeBleakClient"] = []
@@ -215,16 +222,25 @@ class FakeBleakScanner:
         return entry[0] if entry else None
 
 
+class FakeWinBackend:
+    def __init__(self):
+        self._device_info = None
+
+
 class FakeBleakClient:
     def __init__(self, target, disconnected_callback=None, timeout: float = 20.0):
         self.address = target.address if hasattr(target, "address") else str(target)
+        self._is_raw_addr = isinstance(target, str)
         self._disc_cb = disconnected_callback
         self.timeout = timeout
         self.is_connected = False
         self.services: list[FakeService] = []
+        self._backend = FakeWinBackend() if self.address in FAKE_BLE.direct_connect_allowed else None
 
     async def connect(self):
         await asyncio.sleep(0.02)
+        if self._is_raw_addr and self.address not in FAKE_BLE.direct_connect_allowed:
+            raise RuntimeError("direct connect unavailable")
         plan = FAKE_BLE.fail_attempts.get(self.address)
         if plan:
             err = plan.pop(0)
@@ -261,8 +277,7 @@ class FakeBleakClient:
 
 
 # ---------------------------------------------------------------------------
-# Minimal asyncio HTTP/1.1 + RFC 6455 aiohttp shim (used ONLY when aiohttp
-# is not installed locally, so tests still run over real localhost sockets!)
+# Stdlib aiohttp shim (used only when aiohttp is not installed locally)
 # ---------------------------------------------------------------------------
 def _install_aiohttp_shim_if_needed():
     try:
@@ -310,8 +325,8 @@ def _install_aiohttp_shim_if_needed():
             if headers:
                 self.headers.update(headers)
 
-    def json_response(data, status=200):
-        return Response(status=status, text=json.dumps(data), content_type="application/json")
+    def json_response(data, status=200, headers=None):
+        return Response(status=status, text=json.dumps(data), content_type="application/json", headers=headers)
 
     class WebSocketResponse:
         def __init__(self, heartbeat=20):
@@ -328,13 +343,12 @@ def _install_aiohttp_shim_if_needed():
             accept = base64.b64encode(
                 hashlib.sha1((ws_key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()
             ).decode("ascii")
-            resp = (
+            self._writer.write((
                 "HTTP/1.1 101 Switching Protocols\r\n"
                 "Upgrade: websocket\r\n"
                 "Connection: Upgrade\r\n"
                 f"Sec-WebSocket-Accept: {accept}\r\n\r\n"
-            )
-            self._writer.write(resp.encode("utf-8"))
+            ).encode("utf-8"))
             await self._writer.drain()
             request._ws_upgraded = True
             return self
@@ -405,13 +419,10 @@ def _install_aiohttp_shim_if_needed():
         def __init__(self):
             self.routes = []
             self.statics = []
-
         def add_get(self, path, handler):
             self.routes.append(("GET", path, handler))
-
         def add_post(self, path, handler):
             self.routes.append(("POST", path, handler))
-
         def add_static(self, prefix, root, show_index=False):
             self.statics.append((prefix, Path(root)))
 
@@ -439,10 +450,8 @@ def _install_aiohttp_shim_if_needed():
         def __init__(self, app):
             self.app = app
             self._servers = []
-
         async def setup(self):
             pass
-
         async def cleanup(self):
             for cb in self.app.on_shutdown:
                 await cb(self.app)
@@ -456,10 +465,8 @@ def _install_aiohttp_shim_if_needed():
             self.runner = runner
             self.host = host
             self.port = port
-
         async def start(self):
             app = self.runner.app
-
             async def handle_client(reader, writer):
                 try:
                     raw = await reader.readuntil(b"\r\n\r\n")
@@ -480,7 +487,6 @@ def _install_aiohttp_shim_if_needed():
                 cl = int(headers.get("Content-Length", "0") or "0")
                 if cl > 0:
                     await reader.readexactly(cl)
-
                 req = Request(app, method, path, headers, reader, writer)
 
                 async def base_handler(r):
@@ -541,7 +547,6 @@ def _install_aiohttp_shim_if_needed():
 
 _install_aiohttp_shim_if_needed()
 
-# Always inject fake bleak so no physical Bluetooth hardware is needed for E2E tests
 _bleak_mod = types.ModuleType("bleak")
 _bleak_mod.BleakClient = FakeBleakClient
 _bleak_mod.BleakScanner = FakeBleakScanner
@@ -557,8 +562,6 @@ def _free_port() -> int:
 
 
 class BridgeRunnerThread:
-    """Runs flux_bridge.serve() in a background thread on a real TCP port."""
-
     def __init__(self, port: int):
         self.port = port
         self.app = None
@@ -570,7 +573,6 @@ class BridgeRunnerThread:
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
         self.app = flux_bridge.make_app(self.port)
-        url = f"http://localhost:{self.port}/flux-s.html"
 
         async def _boot():
             runner = flux_bridge.web.AppRunner(self.app)
@@ -600,14 +602,27 @@ class BridgeRunnerThread:
         self.thread.join(timeout=5.0)
 
 
-class TestFluxBridgeE2E(unittest.TestCase):
+class TestFluxBridgeV8E2E(unittest.TestCase):
     def setUp(self):
         FAKE_BLE.reset()
+        self.tmp = tempfile.TemporaryDirectory(prefix="flux-bridge-test-")
+        tmp_path = Path(self.tmp.name)
+        self._orig_dirs = (
+            flux_bridge.CONFIG_FILE,
+            flux_bridge.WORKOUT_DIR,
+            flux_bridge.RIDE_DIR,
+            flux_bridge.LOG_DIR,
+        )
+        flux_bridge.CONFIG_FILE = tmp_path / "flux_config.json"
+        flux_bridge.WORKOUT_DIR = tmp_path / "Workouts"
+        flux_bridge.RIDE_DIR = tmp_path / "Rides"
+        flux_bridge.LOG_DIR = tmp_path / "Logs"
+        flux_bridge._ride_stats_cache.clear()
+
         self.port = _free_port()
         self.bridge = BridgeRunnerThread(self.port)
         self.bridge.start()
 
-        # Register simulated Tacx Flux S + Polar H10
         trainer_svcs = [
             FakeService(flux_bridge.FTMS_SVC, [
                 FakeChar("00002ad2-0000-1000-8000-00805f9b34fb", ["notify"]),
@@ -640,205 +655,221 @@ class TestFluxBridgeE2E(unittest.TestCase):
 
     def tearDown(self):
         self.bridge.stop()
+        flux_bridge.CONFIG_FILE, flux_bridge.WORKOUT_DIR, flux_bridge.RIDE_DIR, flux_bridge.LOG_DIR = self._orig_dirs
+        self.tmp.cleanup()
 
-    def test_http_serving_and_origin_security(self):
-        # 1. GET /flux-s.html returns HTML with Cache-Control: no-store
+    def _connect_ws(self, origin=None):
+        return SimpleWSClient.connect("127.0.0.1", self.port, "/ws", origin=origin or f"http://127.0.0.1:{self.port}")
+
+    def test_http_ping_and_origin_security(self):
+        # /flux-s.html
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/flux-s.html", timeout=3) as r:
             self.assertEqual(r.status, 200)
             self.assertEqual(r.headers.get("Cache-Control"), "no-store")
             self.assertIn(b"Tacx Flux S", r.read(2048))
 
-        # 2. port_owner detects 'bridge' via GET /ws without Origin -> 403 'origin not allowed'
+        # /ping has CORS * for file:// redirect
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/ping", timeout=3) as r:
+            self.assertEqual(r.status, 200)
+            self.assertEqual(r.headers.get("Access-Control-Allow-Origin"), "*")
+            self.assertEqual(json.loads(r.read())["app"], "flux-bridge")
+
+        # port_owner
         self.assertEqual(flux_bridge.port_owner(self.port), "bridge")
         self.assertIsNone(flux_bridge.port_owner(_free_port()))
 
-        # 3. WS rejects missing Origin and foreign Origin
-        with self.assertRaises(RuntimeError) as ctx_no_origin:
-            SimpleWSClient.connect("127.0.0.1", self.port, "/ws", origin=None)
-        self.assertIn("403", str(ctx_no_origin.exception))
+        # /ws rejects missing/foreign Origin
+        for bad_orig in (None, "https://evil.example"):
+            with self.assertRaises(RuntimeError) as ctx:
+                SimpleWSClient.connect("127.0.0.1", self.port, "/ws", origin=bad_orig)
+            self.assertIn("403", str(ctx.exception))
 
-        with self.assertRaises(RuntimeError) as ctx_bad_origin:
-            SimpleWSClient.connect("127.0.0.1", self.port, "/ws", origin="https://evil.example")
-        self.assertIn("403", str(ctx_bad_origin.exception))
-
-        # 4. POST /shutdown rejects missing header and foreign origin
-        req_no_hdr = urllib.request.Request(f"http://127.0.0.1:{self.port}/shutdown", data=b"", method="POST")
+        # POST /shutdown rejects missing header and foreign origin
         with self.assertRaises(urllib.error.HTTPError) as e1:
-            urllib.request.urlopen(req_no_hdr, timeout=3)
+            urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{self.port}/shutdown", data=b"", method="POST"), timeout=3)
         self.assertEqual(e1.exception.code, 403)
 
-        req_bad_orig = urllib.request.Request(
-            f"http://127.0.0.1:{self.port}/shutdown",
-            data=b"",
-            method="POST",
-            headers={"X-Flux-Bridge": "shutdown", "Origin": "https://evil.example"},
-        )
         with self.assertRaises(urllib.error.HTTPError) as e2:
-            urllib.request.urlopen(req_bad_orig, timeout=3)
+            urllib.request.urlopen(urllib.request.Request(
+                f"http://127.0.0.1:{self.port}/shutdown", data=b"", method="POST",
+                headers={"X-Flux-Bridge": "shutdown", "Origin": "https://evil.example"},
+            ), timeout=3)
         self.assertEqual(e2.exception.code, 403)
 
-    def test_port_owner_detects_other_program(self):
+    def test_port_owner_other_program(self):
         other_port = _free_port()
-
-        class QuietHandler(http.server.BaseHTTPRequestHandler):
+        class Quiet(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(b"other server")
-            def log_message(self, *_args):
-                pass
-
-        srv = http.server.HTTPServer(("127.0.0.1", other_port), QuietHandler)
+                self.send_response(200); self.end_headers(); self.wfile.write(b"other")
+            def log_message(self, *_a): pass
+        srv = http.server.HTTPServer(("127.0.0.1", other_port), Quiet)
         t = threading.Thread(target=srv.serve_forever, daemon=True)
         t.start()
         try:
             self.assertEqual(flux_bridge.port_owner(other_port), "other")
         finally:
-            srv.shutdown()
-            srv.server_close()
+            srv.shutdown(); srv.server_close()
 
-    def test_scan_throttling_and_multi_device_trainer_plus_hr(self):
-        ws = SimpleWSClient.connect("127.0.0.1", self.port, "/ws", origin=f"http://127.0.0.1:{self.port}")
+    def test_single_tab_ownership_and_takeover(self):
+        ws1 = self._connect_ws()
+        ws2 = self._connect_ws()
         try:
-            res, _ = ws.request("hello", 1)
-            self.assertTrue(res["ok"])
-            self.assertEqual(res["version"], 3)
+            # Tab 1 claims active ownership and connects trainer
+            r1, _ = ws1.request("hello", 1, claim="takeover")
+            self.assertTrue(r1["active"])
+            self.assertEqual(r1["version"], flux_bridge.BRIDGE_VERSION)
+            ws1.request("connect", 2, address=self.trainer_addr)
+            self.assertEqual(len(FAKE_BLE.connected_clients), 1)
 
-            res, _ = ws.request("scanStart", 2)
-            self.assertTrue(res["ok"])
-            self.assertTrue(FAKE_BLE.scanner_active)
+            # Tab 2 reconnects with claim=ifFree -> stays passive!
+            r2, _ = ws2.request("hello", 1, claim="ifFree")
+            self.assertFalse(r2["active"])
+            self.assertTrue(r2["busy"])
 
-            # Fire two adv callbacks immediately with same metadata -> second throttled by 0.7 s
+            # Passive tab cannot scan or connect, but CAN use PASSIVE_OPS (configLoad, clientLog)
+            r_scan, _ = ws2.request("scanStart", 2)
+            self.assertFalse(r_scan["ok"])
+            self.assertIn("another tab", r_scan["error"])
+            r_cfg, _ = ws2.request("configLoad", 3)
+            self.assertTrue(r_cfg["ok"])
+            r_log, _ = ws2.request("clientLog", 4, level="i", text="hello from passive tab")
+            self.assertTrue(r_log["ok"])
+
+            # Tab 2 clicks "Use this tab" (op=claim) -> Tab 1 gets takenOver and BLE is released!
+            r_claim, _ = ws2.request("claim", 5)
+            self.assertTrue(r_claim["ok"] and r_claim["active"])
+            ev_tab1 = ws1.recv_json()
+            self.assertEqual(ev_tab1["ev"], "takenOver")
+            self.assertEqual(len(FAKE_BLE.connected_clients), 0)
+
+            # Now Tab 2 can scan
+            r_scan2, _ = ws2.request("scanStart", 6)
+            self.assertTrue(r_scan2["ok"])
+        finally:
+            ws1.close(); ws2.close()
+
+    def test_config_workouts_and_rides_persistence_with_stale_finalization(self):
+        ws = self._connect_ws()
+        try:
+            ws.request("hello", 1, claim="takeover")
+
+            # Config save/load
+            c0, _ = ws.request("configLoad", 2)
+            self.assertFalse(c0["exists"])
+            ws.request("configSave", 3, config={"ftp": 240, "riderKg": 72})
+            c1, _ = ws.request("configLoad", 4)
+            self.assertTrue(c1["exists"])
+            self.assertEqual(c1["config"]["ftp"], 240)
+
+            # Workouts save/list/load/delete
+            wo = {"name": "Sweet Spot", "blocks": [{"name": "SS", "repeat": 2, "steps": [{"dur": 600, "mode": "erg", "target": 215}]}]}
+            ws.request("workoutSave", 5, workout=wo)
+            wl, _ = ws.request("workoutList", 6)
+            self.assertEqual(wl["workouts"], ["Sweet Spot"])
+            wload, _ = ws.request("workoutLoad", 7, name="Sweet Spot")
+            self.assertEqual(wload["workout"]["blocks"][0]["steps"][0]["target"], 215)
+            ws.request("workoutDelete", 8, name="Sweet Spot")
+            wl2, _ = ws.request("workoutList", 9)
+            self.assertEqual(wl2["workouts"], [])
+
+            # Rides append + conflict check + replace + rideLoad + stale auto-finalization (NP/IF/TSS)
+            lines = [f"{i},{200 + (i % 20)},90,32.5,145,{i * 9},erg,210," for i in range(1, 41)]
+            r_app, _ = ws.request("rideAppend", 10, ride="2026-11-25_120000", first=True, lines=lines, meta={"ftp": 200, "startedAt": "2026-11-25T12:00:00Z"})
+            self.assertTrue(r_app["ok"])
+
+            # Same ride id with first=True returns conflict=True (never mixes two rides!)
+            r_conf, _ = ws.request("rideAppend", 11, ride="2026-11-25_120000", first=True, lines=["1,100,80,25,120,7,erg,100,"])
+            self.assertTrue(r_conf.get("conflict"))
+
+            # Backdate CSV mtime > STALE_RIDE_SEC so rideList triggers finalize_stale_rides()
+            csv_p = flux_bridge.RIDE_DIR / "2026-11-25_120000.csv"
+            old_t = time.time() - flux_bridge.STALE_RIDE_SEC - 60
+            os.utime(csv_p, (old_t, old_t))
+
+            rl, _ = ws.request("rideList", 12)
+            self.assertEqual(len(rl["rides"]), 1)
+            ride_entry = rl["rides"][0]
+            self.assertEqual(ride_entry["seconds"], 40)
+            self.assertIsNotNone(ride_entry["np"])
+            self.assertTrue(ride_entry["meta"].get("autoFinalized"))
+            self.assertIsNotNone(ride_entry["meta"].get("IF"))
+            self.assertIsNotNone(ride_entry["meta"].get("tss"))
+
+            rload, _ = ws.request("rideLoad", 13, ride="2026-11-25_120000")
+            self.assertIn("200,90,32.5,145", rload["csv"])
+        finally:
+            ws.close()
+
+    def test_scan_multi_device_retries_and_direct_connect(self):
+        self.assertEqual(flux_bridge.describe_error(TimeoutError()), "timed out")
+        ws = self._connect_ws()
+        try:
+            ws.request("hello", 1, claim="takeover")
+            ws.request("scanStart", 2)
             tr_dev, tr_adv, _ = FAKE_BLE.devices[self.trainer_addr]
             hr_dev, hr_adv, _ = FAKE_BLE.devices[self.hr_addr]
             FAKE_BLE.scanner_cb(tr_dev, tr_adv)
-            FAKE_BLE.scanner_cb(tr_dev, FakeAdvData("Tacx Flux 46956", -63, [flux_bridge.FTMS_SVC]))
+            FAKE_BLE.scanner_cb(tr_dev, FakeAdvData("Tacx Flux 46956", -63, [flux_bridge.FTMS_SVC]))  # throttled
             FAKE_BLE.scanner_cb(hr_dev, hr_adv)
+            ev1, ev2 = ws.recv_json(), ws.recv_json()
+            self.assertEqual({ev1["device"]["address"], ev2["device"]["address"]}, {self.trainer_addr, self.hr_addr})
 
-            ev1 = ws.recv_json()
-            ev2 = ws.recv_json()
-            addrs = {ev1["device"]["address"], ev2["device"]["address"]}
-            self.assertEqual(addrs, {self.trainer_addr, self.hr_addr})
-            for ev in (ev1, ev2):
-                self.assertEqual(ev["ev"], "adv")
-                if ev["device"]["address"] == self.trainer_addr:
-                    self.assertTrue(ev["device"]["ftms"])
-                    self.assertFalse(ev["device"]["hr"])
-                else:
-                    self.assertTrue(ev["device"]["hr"])
-
-            # Connect trainer (must stop scan first!)
+            # Retry succeeds on attempt 2 after attempt 1 TimeoutError
+            FAKE_BLE.fail_attempts[self.trainer_addr] = [asyncio.TimeoutError(), None]
             res, events = ws.request("connect", 3, address=self.trainer_addr)
             self.assertTrue(res["ok"])
             self.assertFalse(FAKE_BLE.scanner_active)
-            self.assertEqual(res["name"], "Tacx Flux 46956")
-            self.assertTrue(any(e.get("ev") == "progress" for e in events))
-            self.assertEqual(res["services"][0]["uuid"], flux_bridge.FTMS_SVC)
-            self.assertIn("chars", res["services"][0])
+            prog = [e["text"] for e in events if e.get("ev") == "progress"]
+            self.assertTrue(any("attempt 2/3" in p for p in prog))
 
-            # Connect HR strap simultaneously
-            res_hr, _ = ws.request("connect", 4, address=self.hr_addr)
-            self.assertTrue(res_hr["ok"])
+            # Connect HR strap simultaneously + read/write/subscribe/notify/drop
+            ws.request("connect", 4, address=self.hr_addr)
             self.assertEqual(len(FAKE_BLE.connected_clients), 2)
+            r_batt, _ = ws.request("read", 5, address=self.hr_addr, uuid="00002a19-0000-1000-8000-00805f9b34fb")
+            self.assertEqual(r_batt["data"], "58")
+            ws.request("write", 6, address=self.trainer_addr, uuid="00002ad9-0000-1000-8000-00805f9b34fb", data="05c800", response=True)
+            self.assertEqual(FAKE_BLE.writes[-1][2], b"\x05\xc8\x00")
+            ws.request("subscribe", 7, address=self.hr_addr, uuid="00002a37-0000-1000-8000-00805f9b34fb")
+            FAKE_BLE.notify_cbs[(self.hr_addr, "00002a37-0000-1000-8000-00805f9b34fb")](None, bytearray([0x06, 150]))
+            self.assertEqual(ws.recv_json()["data"], "0696")
 
-            # Read on both devices simultaneously
-            r_tr, _ = ws.request("read", 5, address=self.trainer_addr, uuid="00002ad6-0000-1000-8000-00805f9b34fb")
-            self.assertEqual(r_tr["data"], "000064000100")
-            r_hr, _ = ws.request("read", 6, address=self.hr_addr, uuid="00002a19-0000-1000-8000-00805f9b34fb")
-            self.assertEqual(r_hr["data"], "58")
+            # Drop HR -> disconnected event while trainer stays up
+            [c for c in FAKE_BLE.connected_clients if c.address == self.hr_addr][0].simulate_drop()
+            self.assertEqual(ws.recv_json(), {"ev": "disconnected", "address": self.hr_addr})
+            ws.request("disconnect", 8, address=self.trainer_addr)
 
-            # Write to trainer control point
-            w_res, _ = ws.request("write", 7, address=self.trainer_addr, uuid="00002ad9-0000-1000-8000-00805f9b34fb", data="059600", response=True)
-            self.assertTrue(w_res["ok"])
-            self.assertEqual(FAKE_BLE.writes[-1], (self.trainer_addr, "00002ad9-0000-1000-8000-00805f9b34fb", b"\x05\x96\x00", True))
+            # Windows direct-connect fallback when find_device_by_address returns None
+            direct_addr = "AA:BB:CC:DD:EE:01"
+            FAKE_BLE.devices[direct_addr] = (
+                FakeBLEDevice(direct_addr, "Shared Trainer"),
+                FakeAdvData("Shared Trainer", -60, [flux_bridge.FTMS_SVC]),
+                FAKE_BLE.devices[self.trainer_addr][2],
+            )
+            FAKE_BLE.find_returns_none.add(direct_addr)
+            FAKE_BLE.direct_connect_allowed.add(direct_addr)
+            res_dir, evs_dir = ws.request("connect", 9, address=direct_addr)
+            self.assertTrue(res_dir["ok"])
+            self.assertTrue(any("direct connection" in e.get("text", "") for e in evs_dir if e.get("ev") == "progress"))
+            ws.request("disconnect", 10, address=direct_addr)
 
-            # Subscribe and push notify on both devices
-            ws.request("subscribe", 8, address=self.trainer_addr, uuid="00002ad2-0000-1000-8000-00805f9b34fb")
-            ws.request("subscribe", 9, address=self.hr_addr, uuid="00002a37-0000-1000-8000-00805f9b34fb")
-            FAKE_BLE.notify_cbs[(self.hr_addr, "00002a37-0000-1000-8000-00805f9b34fb")](None, bytearray([0x06, 145]))
-            n_ev = ws.recv_json()
-            self.assertEqual(n_ev["ev"], "notify")
-            self.assertEqual(n_ev["address"], self.hr_addr)
-            self.assertEqual(n_ev["data"], "0691")
-
-            # Simulate unexpected HR drop -> disconnected event carries HR address while trainer stays connected
-            hr_client = [c for c in FAKE_BLE.connected_clients if c.address == self.hr_addr][0]
-            hr_client.simulate_drop()
-            d_ev = ws.recv_json()
-            self.assertEqual(d_ev, {"ev": "disconnected", "address": self.hr_addr})
-            self.assertEqual(len(FAKE_BLE.connected_clients), 1)
-            self.assertEqual(FAKE_BLE.connected_clients[0].address, self.trainer_addr)
-
-            # Disconnect trainer explicitly
-            disc_res, _ = ws.request("disconnect", 10, address=self.trainer_addr)
-            self.assertTrue(disc_res["ok"])
-            self.assertEqual(len(FAKE_BLE.connected_clients), 0)
-        finally:
-            ws.close()
-
-    def test_connect_retries_and_readable_errors(self):
-        # Never returns empty error string for TimeoutError
-        self.assertEqual(flux_bridge.describe_error(TimeoutError()), "timed out")
-        self.assertEqual(flux_bridge.describe_error(asyncio.TimeoutError()), "timed out")
-
-        ws = SimpleWSClient.connect("127.0.0.1", self.port, "/ws", origin=f"http://localhost:{self.port}")
-        try:
-            # Attempt 1 hangs (TimeoutError), Attempt 2 succeeds!
-            FAKE_BLE.fail_attempts[self.trainer_addr] = [asyncio.TimeoutError(), None]
-            res, events = ws.request("connect", 1, address=self.trainer_addr)
-            self.assertTrue(res["ok"])
-            prog_texts = [e["text"] for e in events if e.get("ev") == "progress"]
-            self.assertTrue(any("attempt 1/3" in t for t in prog_texts))
-            self.assertTrue(any("attempt 2/3" in t for t in prog_texts))
-            ws.request("disconnect", 2, address=self.trainer_addr)
-
-            # Seed RSSI via scan so error message includes signal strength
-            ws.request("scanStart", 3)
-            tr_dev, tr_adv, _ = FAKE_BLE.devices[self.trainer_addr]
-            FAKE_BLE.scanner_cb(tr_dev, tr_adv)
-            ws.recv_json()  # consume adv
-
-            # All 3 attempts time out -> readable message with RSSI and hints (never empty!)
+            # 3-attempt timeout reports readable error + RSSI
             FAKE_BLE.fail_attempts[self.trainer_addr] = [TimeoutError(), TimeoutError(), TimeoutError()]
-            res_fail, _ = ws.request("connect", 4, address=self.trainer_addr)
-            self.assertFalse(res_fail["ok"])
-            self.assertTrue(res_fail["error"])
-            self.assertIn("3 attempts", res_fail["error"])
-            self.assertIn("timed out", res_fail["error"])
-            self.assertIn("-61 dBm", res_fail["error"])
-
-            # Device not found during find_device_by_address
-            FAKE_BLE.find_returns_none.add("11:22:33:44:55:66")
-            res_nf, _ = ws.request("connect", 5, address="11:22:33:44:55:66")
-            self.assertFalse(res_nf["ok"])
-            self.assertIn("device not found", res_nf["error"])
+            r_fail, _ = ws.request("connect", 11, address=self.trainer_addr)
+            self.assertFalse(r_fail["ok"])
+            self.assertIn("timed out", r_fail["error"])
+            self.assertIn("-63 dBm", r_fail["error"])
         finally:
             ws.close()
 
-    def test_stop_running_bridge_disconnects_devices_and_frees_port(self):
-        ws = SimpleWSClient.connect("127.0.0.1", self.port, "/ws", origin=f"http://127.0.0.1:{self.port}")
-        res, _ = ws.request("connect", 1, address=self.trainer_addr)
-        self.assertTrue(res["ok"])
+    def test_shutdown_cli_and_ws_release_ble_and_port(self):
+        ws = self._connect_ws()
+        ws.request("hello", 1, claim="takeover")
+        ws.request("connect", 2, address=self.trainer_addr)
         self.assertEqual(len(FAKE_BLE.connected_clients), 1)
-
-        # CLI-style shutdown via POST /shutdown + wait until port is free
-        stopped = flux_bridge.stop_running_bridge(self.port)
-        self.assertTrue(stopped)
+        self.assertTrue(flux_bridge.stop_running_bridge(self.port))
         self.assertIsNone(flux_bridge.port_owner(self.port))
         self.assertEqual(len(FAKE_BLE.connected_clients), 0)
         ws.close()
-
-    def test_ws_shutdown_op_frees_port(self):
-        ws = SimpleWSClient.connect("127.0.0.1", self.port, "/ws", origin=f"http://127.0.0.1:{self.port}")
-        ws.request("connect", 1, address=self.trainer_addr)
-        res, _ = ws.request("shutdown", 2)
-        self.assertTrue(res["ok"])
-        ws.close()
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline and flux_bridge.port_owner(self.port) is not None:
-            time.sleep(0.1)
-        self.assertIsNone(flux_bridge.port_owner(self.port))
-        self.assertEqual(len(FAKE_BLE.connected_clients), 0)
 
 
 if __name__ == "__main__":

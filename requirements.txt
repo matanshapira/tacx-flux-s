@@ -1,0 +1,4 @@
+# Exact versions the bridge is tested with. flux_bridge.py's direct-connect fallback uses a private part of
+# bleak (client._backend._device_info), so a newer bleak may break it: test before raising these pins.
+bleak==3.1.0
+aiohttp==3.14.5

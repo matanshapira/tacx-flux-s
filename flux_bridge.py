@@ -12,17 +12,26 @@ Run:       python flux_bridge.py            (opens the GUI in your browser)
            python flux_bridge.py --no-browser --port 8765
            python flux_bridge.py --stop     (stops a running bridge and frees the port)
            python flux_bridge.py --replace  (stops a running bridge, then starts this one)
+
+Files (next to flux-s.html): flux_config.json (all settings), Workouts/ (saved workouts), Rides/ (every ride),
+Logs/ (bridge + app log, one file per day, last 14 days kept).
 """
 import argparse
 import asyncio
+import collections
+import csv
 import json
+import os
 import logging
+import logging.handlers
+import re
 import socket
 import sys
 import time
 import urllib.error
 import urllib.request
 import webbrowser
+from datetime import datetime, timezone
 from pathlib import Path
 
 from aiohttp import WSMsgType, web
@@ -34,12 +43,186 @@ FTMS_SVC = "00001826-0000-1000-8000-00805f9b34fb"
 FEC_SVC = "6e40fec1-b5a3-f393-e0a9-e50e24dcca9e"
 HR_SVC = "0000180d-0000-1000-8000-00805f9b34fb"
 log = logging.getLogger("flux-bridge")
+# Everything the app keeps lives next to flux-s.html (nothing is stored in the browser):
+CONFIG_FILE = ROOT / "flux_config.json"   # all settings (FTP, weight, devices, options, …), see --config
+WORKOUT_DIR = ROOT / "Workouts"           # saved workouts as .json files, see --workouts
+RIDE_DIR = ROOT / "Rides"                 # every ride, written continuously as <id>.csv + <id>.json, see --rides
+LOG_DIR = ROOT / "Logs"                   # flux_bridge.log (+ one older file per day), see --logs
+LOG_DAYS = 14
+STALE_RIDE_SEC = 600                      # a ride whose file hasn't changed for 10 min is over
+RIDE_HEADER = "time_s,power_w,cadence_rpm,speed_kmh,heart_rate_bpm,distance_m,mode,target,workout_step"
+_RIDE_ID = re.compile(r"^[0-9A-Za-z_-]{1,64}$")
+_ride_stats_cache = {}
+BRIDGE_VERSION = 8
 CONNECT_ATTEMPTS = 3
 CONNECT_TIMEOUT = 20          # seconds per attempt (a good connect takes ~2-7 s)
+CONNECT_DEADLINE = 95         # whole connect op (all attempts); the page waits longer than this
+OPEN_BROWSER_WAIT = 3.5       # after start: give an already open tab time to reconnect before opening a new one
+# Only ONE GUI tab may use Bluetooth at a time. Two tabs = two controllers fighting over the trainer
+# (conflicting ERG targets, control requests, one tab's reconnect dropping the other's link).
+# Tabs that aren't the active one may only read files and save their ride.
+PASSIVE_OPS = {"hello", "configLoad", "rideAppend", "rideList", "rideLoad", "workoutList", "workoutLoad", "clientLog"}
+NOT_ACTIVE = "this app is open in another tab – use that tab, or click 'Use this tab'"
 
 
 class BridgeError(Exception):
     """An error whose message is meant for the user as-is."""
+
+
+def workout_files():
+    """{workout name: (path, data)} for every valid .json file in WORKOUT_DIR."""
+    WORKOUT_DIR.mkdir(parents=True, exist_ok=True)
+    out = {}
+    for f in sorted(WORKOUT_DIR.glob("*.json")):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("blocks"), list):
+                out.setdefault(str(data.get("name") or f.stem), (f, data))
+        except Exception:
+            log.warning("skipping unreadable workout file %s", f.name)
+    return out
+
+
+def ensure_folder(path):
+    """Create the folder. On Windows an existing folder that differs only in capitalisation
+    (e.g. 'rides' from an older version) is renamed to the new name, keeping its files."""
+    parent = path.parent
+    if parent.exists():
+        for p in parent.iterdir():
+            if p.is_dir() and p.name.lower() == path.name.lower() and p.name != path.name:
+                tmp = parent / (path.name + ".renaming")
+                p.rename(tmp)
+                tmp.rename(path)
+                log.info("renamed folder %s -> %s", p.name, path.name)
+                break
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def ride_paths(rid):
+    if not _RIDE_ID.match(str(rid or "")):
+        raise BridgeError("invalid ride id")
+    RIDE_DIR.mkdir(parents=True, exist_ok=True)
+    return RIDE_DIR / f"{rid}.csv", RIDE_DIR / f"{rid}.json"
+
+
+def read_json(path, default=None):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
+
+
+def write_json_atomic(path, data):
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+
+def ride_stats(csv_path):
+    """Summary of a ride CSV (cached by size/mtime): duration, avg/max power, NP, kJ, cadence, HR, km."""
+    st = csv_path.stat()
+    key = (str(csv_path), st.st_mtime_ns, st.st_size)
+    if key in _ride_stats_cache:
+        return _ride_stats_cache[key]
+
+    def num(row, k):
+        try:
+            v = row.get(k)
+            return float(v) if v not in (None, "") else None
+        except ValueError:
+            return None
+
+    n = sp = mp = 0.0
+    roll, rs, s4, n4 = collections.deque(), 0.0, 0.0, 0
+    hs = hn = hm = cs = cn = 0.0
+    dist = 0.0
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            pw = num(row, "power_w")
+            if pw is None:
+                continue
+            n += 1; sp += pw; mp = max(mp, pw)
+            roll.append(pw); rs += pw
+            if len(roll) > 30:
+                rs -= roll.popleft()
+            if len(roll) == 30:
+                s4 += (rs / 30) ** 4; n4 += 1
+            h = num(row, "heart_rate_bpm")
+            if h:
+                hs += h; hn += 1; hm = max(hm, h)
+            c = num(row, "cadence_rpm")
+            if c and c > 0:
+                cs += c; cn += 1
+            dist = num(row, "distance_m") or dist
+    out = {"seconds": int(n), "avgPower": round(sp / n) if n else 0, "maxPower": round(mp),
+           "np": round((s4 / n4) ** 0.25) if n4 else None, "kj": round(sp / 1000),
+           "avgCad": round(cs / cn) if cn else None, "avgHr": round(hs / hn) if hn else None,
+           "maxHr": round(hm) if hn else None, "km": round(dist / 1000, 2)}
+    _ride_stats_cache[key] = out
+    return out
+
+
+def finalize_stale_rides():
+    """Rides that never got 'End ride' (tab closed, PC slept, connection lost) have no end time / NP / IF / TSS
+    in their .json. Fill them in from the CSV once the file hasn't changed for STALE_RIDE_SEC. If such a ride
+    is continued later (the file changes again), it is recomputed. The page's own final summary wins."""
+    if not RIDE_DIR.exists():
+        return 0
+    done = 0
+    now = time.time()
+    for csv_p in RIDE_DIR.glob("*.csv"):
+        try:
+            st = csv_p.stat()
+            if now - st.st_mtime < STALE_RIDE_SEC:
+                continue                                   # may still be recording
+            meta_p = csv_p.with_suffix(".json")
+            meta = read_json(meta_p, {}) or {}
+            if not isinstance(meta, dict):
+                meta = {}
+            if meta.get("endedAt") and not meta.get("autoFinalized"):
+                continue                                   # finished normally
+            if meta.get("autoFinalized") and meta.get("csvMtime") == st.st_mtime_ns:
+                continue                                   # already done, unchanged since
+            stats = ride_stats(csv_p)
+            ftp = meta.get("ftp") or 0
+            np_ = stats.get("np")
+            if_ = round(np_ / ftp, 3) if np_ and ftp else None
+            tss = round(stats["seconds"] / 3600 * if_ * if_ * 100) if if_ else None
+            meta.update({"endedAt": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat().replace("+00:00", "Z"),
+                         "seconds": stats["seconds"], "np": np_, "IF": if_, "tss": tss,
+                         "autoFinalized": True, "csvMtime": st.st_mtime_ns})
+            write_json_atomic(meta_p, meta)
+            log.info("ride %s had no end – finished it from the file (%d s, NP %s, TSS %s)", csv_p.stem, stats["seconds"], np_, tss)
+            done += 1
+        except Exception as e:
+            log.warning("could not finish ride %s: %s", csv_p.name, describe_error(e))
+    return done
+
+
+def setup_logging():
+    """Console + Logs/flux_bridge.log (new file every midnight, LOG_DAYS kept). The page sends its own
+    log lines too (op clientLog), so one file shows both sides of every connection problem."""
+    fmt = logging.Formatter("%(asctime)s  %(message)s", datefmt="%H:%M:%S")
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    console = logging.StreamHandler()
+    console.setFormatter(fmt)
+    root.addHandler(console)
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        fh = logging.handlers.TimedRotatingFileHandler(LOG_DIR / "flux_bridge.log", when="midnight",
+                                                       backupCount=LOG_DAYS, encoding="utf-8")
+        fh.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-7s %(name)s  %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+        root.addHandler(fh)
+    except OSError as e:
+        print(f"Could not write the log file in {LOG_DIR}: {e}")
+    logging.getLogger("aiohttp.access").setLevel(logging.WARNING)   # no line per page/file request
+    logging.getLogger("bleak").setLevel(logging.WARNING)
+
+
+def workout_path(name):
+    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(" .")[:80] or "workout"
+    return WORKOUT_DIR / f"{safe}.json"
 
 
 def describe_error(e):
@@ -48,6 +231,16 @@ def describe_error(e):
     if isinstance(e, (TimeoutError, asyncio.TimeoutError)):
         return "timed out"
     return f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+
+
+async def safe_disconnect(client, timeout=5):
+    """On Windows, disconnect() of a half-open (timed-out) session can wait forever.
+    Never let that cleanup block the next attempt or the GUI."""
+    try:
+        await asyncio.wait_for(client.disconnect(), timeout)
+    except Exception as e:
+        if isinstance(e, (TimeoutError, asyncio.TimeoutError)):
+            log.warning("Bluetooth cleanup didn't finish within %d s – continuing anyway", timeout)
 
 
 class Session:
@@ -63,6 +256,9 @@ class Session:
         self.ble_devices = {}  # address -> BLEDevice (faster connect on Windows)
         self.last_sent = {}
         self.tasks = set()
+        self.connecting = {}   # address -> task of the connect op in flight (cancelled by disconnect / a newer connect)
+        self.active = False    # True for the one tab that owns Bluetooth (see claim())
+        self.closed = False
 
     # ---------- messaging ----------
     async def send(self, obj):
@@ -86,6 +282,9 @@ class Session:
         try:
             res = await self.handle(msg) or {}
             await self.send({"id": mid, "ok": True, **res})
+        except asyncio.CancelledError:  # e.g. a connect superseded by a disconnect / newer connect
+            log.info("op %s cancelled", msg.get("op"))
+            await self.send({"id": mid, "ok": False, "error": "cancelled"})
         except Exception as e:  # report every failure back to the GUI
             text = describe_error(e)
             log.warning("op %s failed: %s", msg.get("op"), text)
@@ -126,62 +325,225 @@ class Session:
             log.info("%s disconnected", addr)
             self.emit({"ev": "disconnected", "address": addr})
 
+    async def cancel_connect(self, addr=None):
+        """Abort connect ops in flight (one device, or all) so they can't finish later and leave an
+        orphaned connection that blocks the trainer."""
+        me = asyncio.current_task()
+        for a in ([addr] if addr else list(self.connecting)):
+            t = self.connecting.pop(a, None)
+            if t and t is not me and not t.done():
+                t.cancel()
+                try:
+                    await asyncio.wait_for(asyncio.shield(t), 10)
+                except BaseException:
+                    pass
+
     async def disconnect(self, addr=None):
-        """Disconnect one device, or all when addr is None."""
+        """Disconnect one device, or all when addr is None (also aborts connects in flight)."""
+        await self.cancel_connect(addr)
         for a in ([addr] if addr else list(self.clients)):
             c = self.clients.pop(a, None)
             if c:
-                try:
-                    await c.disconnect()
-                except Exception:
-                    pass
+                log.info("disconnecting %s", a)
+                await safe_disconnect(c)
 
-    async def close(self):
+    async def release(self):
+        """Give up Bluetooth (stop the search, disconnect every device)."""
         await self.stop_scan()
         await self.disconnect()
+
+    async def close(self):
+        self.closed = True
+        self.active = False
+        await self.release()
+
+    async def claim(self, takeover):
+        """Make this tab the one that uses Bluetooth. takeover=True (a page that was just opened / reloaded,
+        or 'Use this tab'): the previous tab is told to stop and its devices are disconnected first.
+        takeover=False (a tab reconnecting after a bridge restart): only if no other tab is active."""
+        cur = self.app[ACTIVE]["s"]
+        if cur is not None and cur is not self and not cur.closed and not cur.ws.closed:
+            if not takeover:
+                log.info("a second GUI tab reconnected – another tab is active, it stays passive")
+                return False
+            log.info("a new GUI tab took over – releasing the devices of the previous tab")
+            cur.active = False
+            await cur.send({"ev": "takenOver"})
+            await cur.release()
+        self.app[ACTIVE]["s"] = self
+        self.active = True
+        return True
 
     async def _connect_with_retries(self, addr):
         """Windows often leaves the FIRST connection attempt hanging; a fresh scan + retry then
         connects within seconds (measured: attempt 1 timed out at 60 s, attempt 2 took 6 s).
         So: short per-attempt timeout, several attempts, progress reported to the GUI."""
-        last = None
+        last, tried = None, 0
+        deadline = time.monotonic() + CONNECT_DEADLINE
         for n in range(1, CONNECT_ATTEMPTS + 1):
+            if n > 1 and deadline - time.monotonic() < CONNECT_TIMEOUT + 10:
+                log.info("no time left for attempt %d/%d", n, CONNECT_ATTEMPTS)
+                break
             target = self.ble_devices.get(addr) if n == 1 else None
             if target is None:
                 self.emit({"ev": "progress", "address": addr, "text": f"looking for {addr}…"})
+                log.info("looking for %s (search up to 10 s)", addr)
                 target = await BleakScanner.find_device_by_address(addr, timeout=10)
                 if target is None:
+                    log.info("%s is not advertising – trying a direct connection", addr)
+                    # Not advertising: it may already be connected to another app on THIS PC (e.g. MyWhoosh).
+                    # Windows can share that link, so try connecting by address without a scan.
+                    self.emit({"ev": "progress", "address": addr,
+                               "text": "not advertising – trying a direct connection (it may be in use by another app on this PC)…"})
+                    client = await self._connect_direct(addr)
+                    if client:
+                        return client
                     raise BridgeError(
-                        "device not found – make sure it is powered on (pedal to wake the trainer, "
-                        "wear the HR strap) and not connected to another app or phone")
+                        "device not found – make sure it is powered on (pedal to wake the trainer, wear the HR strap). "
+                        "If another app on a phone/tablet is connected to it, the device may accept only that one connection")
                 self.ble_devices[addr] = target
+            tried = n
             self.emit({"ev": "progress", "address": addr, "text": f"connecting… (attempt {n}/{CONNECT_ATTEMPTS})"})
             log.info("connecting to %s (attempt %d/%d)", addr, n, CONNECT_ATTEMPTS)
             client = BleakClient(target, disconnected_callback=lambda c, a=addr: self._on_disconnect(a, c),
                                  timeout=CONNECT_TIMEOUT)
             try:
-                await client.connect()
+                await asyncio.wait_for(client.connect(), CONNECT_TIMEOUT + 5)   # hard limit on top of bleak's own
+                log.info("connected to %s (attempt %d/%d)", addr, n, CONNECT_ATTEMPTS)
                 return client
+            except asyncio.CancelledError:
+                await safe_disconnect(client)          # never leave a half-open session behind
+                raise
             except Exception as e:
                 last = e
-                log.warning("attempt %d/%d failed: %s", n, CONNECT_ATTEMPTS, describe_error(e))
-                try:
-                    await client.disconnect()          # release a half-open session before retrying
-                except Exception:
-                    pass
+                log.warning("attempt %d/%d failed: %s%s", n, CONNECT_ATTEMPTS, describe_error(e),
+                            " – retrying with a fresh search" if n < CONNECT_ATTEMPTS else "")
+                await safe_disconnect(client)          # release a half-open session before retrying
                 await asyncio.sleep(1)
         rssi = self.seen.get(addr, {}).get("rssi")
         raise BridgeError(
-            f"found the device but it didn't finish connecting after {CONNECT_ATTEMPTS} attempts "
+            f"found the device but it didn't finish connecting after {tried} attempt(s) "
             f"({describe_error(last)}). Try again; if it keeps failing: pedal to wake the trainer, close other "
             f"apps/phones connected to it, move the PC or a USB Bluetooth dongle closer"
             + (f" (signal now {rssi} dBm)" if rssi is not None else "") + ", or power-cycle the trainer.")
+
+    async def _connect_direct(self, addr):
+        client = BleakClient(addr, disconnected_callback=lambda c, a=addr: self._on_disconnect(a, c), timeout=CONNECT_TIMEOUT)
+        backend = getattr(client, "_backend", None)
+        if backend is None or not hasattr(backend, "_device_info"):
+            return None                                   # only the Windows backend can skip the scan
+        try:
+            backend._device_info = int(addr.replace(":", ""), 16)
+            await asyncio.wait_for(client.connect(), CONNECT_TIMEOUT + 5)
+            log.info("direct connection to %s worked", addr)
+            return client
+        except asyncio.CancelledError:
+            await safe_disconnect(client)
+            raise
+        except Exception as e:
+            log.warning("direct connection to %s failed: %s", addr, describe_error(e))
+            await safe_disconnect(client)
+            return None
 
     # ---------- operations ----------
     async def handle(self, msg):
         op = msg.get("op")
         if op == "hello":
-            return {"version": 3}
+            claim = msg.get("claim", "takeover")          # pages older than version 7 don't send it
+            ok = await self.claim(takeover=claim != "ifFree")
+            return {"version": BRIDGE_VERSION, "active": ok, "busy": not ok}
+        if op == "claim":                                 # "Use this tab" button
+            await self.claim(takeover=True)
+            return {"active": True}
+        if not self.active and op not in PASSIVE_OPS:
+            raise BridgeError(NOT_ACTIVE)
+        if op == "configLoad":                            # settings file next to flux-s.html
+            data = read_json(CONFIG_FILE, None)
+            return {"exists": isinstance(data, dict), "config": data if isinstance(data, dict) else {}, "file": str(CONFIG_FILE)}
+        if op == "configSave":
+            cfg = msg.get("config")
+            if not isinstance(cfg, dict):
+                raise BridgeError("invalid settings")
+            write_json_atomic(CONFIG_FILE, cfg)
+            return {"file": str(CONFIG_FILE)}
+        if op == "rideAppend":                            # called every few seconds while recording
+            csv_p, meta_p = ride_paths(msg.get("ride"))
+            new = not csv_p.exists()
+            if msg.get("first") and not new and not msg.get("replace"):
+                # a NEW ride whose file already exists = another recorder (tab) started in the same second.
+                # Never mix two rides in one file: the page picks another id and retries.
+                log.warning("ride %s already exists – asking the GUI for another ride id", csv_p.stem)
+                return {"conflict": True}
+            lines = [str(x).replace("\n", " ").replace("\r", " ") for x in (msg.get("lines") or [])]
+            if msg.get("replace"):                        # whole ride at once (e.g. recovered from browser storage)
+                tmp = csv_p.with_suffix(".csv.tmp")
+                with open(tmp, "w", encoding="utf-8", newline="") as f:
+                    f.write((msg.get("header") or RIDE_HEADER) + "\n")
+                    f.writelines(x + "\n" for x in lines)
+                    f.flush()
+                    os.fsync(f.fileno())
+                tmp.replace(csv_p)
+            else:
+                with open(csv_p, "a", encoding="utf-8", newline="") as f:
+                    if new:
+                        f.write((msg.get("header") or RIDE_HEADER) + "\n")
+                    f.writelines(x + "\n" for x in lines)
+                    f.flush()
+                    os.fsync(f.fileno())                 # on disk now, even if the PC crashes
+            if msg.get("meta"):
+                meta = read_json(meta_p, {}) or {}
+                meta.update(msg["meta"])
+                write_json_atomic(meta_p, meta)
+            if new:
+                log.info("recording ride to %s", csv_p)
+            return {"file": str(csv_p)}
+        if op == "rideList":
+            await asyncio.to_thread(finalize_stale_rides)
+            rides = []
+            for csv_p in sorted(RIDE_DIR.glob("*.csv"), reverse=True) if RIDE_DIR.exists() else []:
+                try:
+                    stats = ride_stats(csv_p)
+                except Exception as e:
+                    stats = {"error": describe_error(e)}
+                rides.append({"id": csv_p.stem, "meta": read_json(csv_p.with_suffix(".json"), {}) or {}, **stats})
+            return {"folder": str(RIDE_DIR), "rides": rides}
+        if op == "rideLoad":
+            csv_p, meta_p = ride_paths(msg.get("ride"))
+            if not csv_p.exists():
+                raise BridgeError("ride not found")
+            return {"csv": csv_p.read_text(encoding="utf-8"), "meta": read_json(meta_p, {}) or {}, "file": str(csv_p)}
+        if op == "workoutList":
+            return {"folder": str(WORKOUT_DIR), "workouts": sorted(workout_files(), key=str.lower)}
+        if op == "workoutLoad":
+            hit = workout_files().get(msg["name"])
+            if not hit:
+                raise BridgeError(f'workout "{msg["name"]}" not found in {WORKOUT_DIR}')
+            return {"workout": hit[1]}
+        if op == "workoutSave":
+            wo = msg.get("workout")
+            if not isinstance(wo, dict) or not str(wo.get("name", "")).strip() or not isinstance(wo.get("blocks"), list):
+                raise BridgeError("invalid workout")
+            existing = workout_files().get(wo["name"])
+            path = existing[0] if existing else workout_path(wo["name"])
+            n = 2
+            while not existing and path.exists():           # another workout already uses this file name
+                path = workout_path(f'{wo["name"]} ({n})'); n += 1
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(wo, indent=2, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(path)                                # atomic: never leaves a half-written file
+            log.info("workout saved: %s", path)
+            return {"file": str(path)}
+        if op == "workoutDelete":
+            hit = workout_files().get(msg["name"])
+            if hit:
+                hit[0].unlink()
+                log.info("workout deleted: %s", hit[0])
+            return {}
+        if op == "clientLog":               # the page's log lines go into the same log file
+            text = str(msg.get("text", ""))[:500].replace("\n", " ")
+            level = {"e": logging.ERROR, "w": logging.WARNING}.get(msg.get("level"), logging.INFO)
+            logging.getLogger("page" if self.active else "page(passive)").log(level, "%s", text)
+            return {}
         if op == "shutdown":                # "Stop bridge" button in the GUI
             request_stop(self.app, "Stop bridge pressed in the GUI")
             return {}
@@ -198,9 +560,21 @@ class Session:
         if op == "connect":
             await self.stop_scan()          # Windows connects more reliably when not scanning
             addr = msg["address"]
-            await self.disconnect(addr)
-            client = await self._connect_with_retries(addr)
+            await self.disconnect(addr)     # also aborts an older connect to the same device still in flight
+            me = asyncio.current_task()
+            self.connecting[addr] = me
+            try:
+                client = await self._connect_with_retries(addr)
+            finally:
+                if self.connecting.get(addr) is me:
+                    del self.connecting[addr]
+            if self.closed or not self.active:          # tab closed / taken over while connecting
+                await safe_disconnect(client)
+                raise BridgeError(NOT_ACTIVE if not self.closed else "GUI closed")
             self.clients[addr] = client
+            if not client.is_connected:                 # dropped before the disconnect callback could see it
+                self.clients.pop(addr, None)
+                raise BridgeError("the device disconnected right after connecting – try again")
             target = self.ble_devices.get(addr, addr)
             services = [
                 {"uuid": s.uuid.lower(),
@@ -232,6 +606,7 @@ class Session:
 
 
 SESSIONS = web.AppKey("sessions", set)
+ACTIVE = web.AppKey("active", dict)    # {"s": the Session that owns Bluetooth, or None}
 STOP = web.AppKey("stop", asyncio.Event)
 STOP_FAILED = ("Could not stop the running bridge automatically (it may be an older version without this "
                "feature). Close its window, or press Ctrl+C in its terminal, then try again.")
@@ -248,15 +623,24 @@ def make_app(port):
         await ws.prepare(request)
         session = Session(ws, request.app)
         request.app[SESSIONS].add(session)
-        log.info("GUI connected")
+        log.info("GUI connected (%d tab(s) open)", len(request.app[SESSIONS]))
         try:
             async for m in ws:
                 if m.type == WSMsgType.TEXT:
-                    session.dispatch(json.loads(m.data))
+                    try:
+                        msg = json.loads(m.data)
+                    except ValueError:
+                        log.warning("ignoring a malformed message from the GUI")
+                        continue
+                    if isinstance(msg, dict):
+                        session.dispatch(msg)
         finally:
             request.app[SESSIONS].discard(session)
+            was_active = request.app[ACTIVE]["s"] is session
+            if was_active:
+                request.app[ACTIVE]["s"] = None
             await session.close()
-            log.info("GUI disconnected")
+            log.info("GUI disconnected%s", " – Bluetooth devices released" if was_active else " (passive tab)")
         return ws
 
     async def shutdown_handler(request):
@@ -270,6 +654,10 @@ def make_app(port):
 
     async def index(_request):
         raise web.HTTPFound("/" + PAGE)
+
+    async def ping(_request):
+        # lets a copy of flux-s.html that was opened directly from disk (file://) find the bridge and switch to it
+        return web.json_response({"app": "flux-bridge", "page": "/" + PAGE}, headers={"Access-Control-Allow-Origin": "*"})
 
     @web.middleware
     async def no_cache(request, handler):
@@ -286,11 +674,13 @@ def make_app(port):
 
     app = web.Application(middlewares=[no_cache])
     app[SESSIONS] = set()
+    app[ACTIVE] = {"s": None}
     app[STOP] = asyncio.Event()
     app.on_shutdown.append(on_shutdown)
     app.router.add_get("/ws", ws_handler)
     app.router.add_post("/shutdown", shutdown_handler)
     app.router.add_get("/", index)
+    app.router.add_get("/ping", ping)
     app.router.add_static("/", ROOT, show_index=False)
     return app
 
@@ -310,9 +700,26 @@ async def serve(app, port, url, open_browser):
         raise SystemExit(f"Could not start on port {port}: {e.strerror or e}. "
                          f"Is the bridge already running in another window?")
     print(f"Flux S bridge running at {url}")
+    for folder in (WORKOUT_DIR, RIDE_DIR):
+        ensure_folder(folder)
+    print(f"Settings file:  {CONFIG_FILE}")
+    print(f"Workouts:       {WORKOUT_DIR}")
+    print(f"Rides:          {RIDE_DIR}")
+    print(f"Log:            {LOG_DIR / 'flux_bridge.log'}")
+    n = await asyncio.to_thread(finalize_stale_rides)
+    if n:
+        print(f"Finished {n} ride(s) that had no end.")
     print("Stop it with Ctrl+C, the 'Stop bridge' button in the GUI, or:  python flux_bridge.py --stop")
     if open_browser:
-        asyncio.get_running_loop().call_later(0.8, webbrowser.open, url)
+        async def open_unless_a_tab_reconnects():
+            # A tab left open from an earlier run reconnects by itself within a few seconds.
+            # Opening a second tab then would put two controllers on the trainer.
+            await asyncio.sleep(OPEN_BROWSER_WAIT)
+            if app[SESSIONS]:
+                print("An open app tab reconnected - using it (no new browser tab opened).")
+            else:
+                webbrowser.open(url)
+        open_task = asyncio.get_running_loop().create_task(open_unless_a_tab_reconnects())  # noqa: F841 (keep a reference)
     try:
         await app[STOP].wait()
     finally:
@@ -321,13 +728,27 @@ async def serve(app, port, url, open_browser):
 
 
 def main():
+    global WORKOUT_DIR, RIDE_DIR, CONFIG_FILE, LOG_DIR
     ap = argparse.ArgumentParser(description="Flux S GUI + Bluetooth LE bridge")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-browser", action="store_true", help="don't open the GUI automatically")
     ap.add_argument("--stop", action="store_true", help="stop the bridge running on --port (frees the port), then exit")
     ap.add_argument("--replace", action="store_true", help="if a bridge is already running, stop it and start this one")
+    ap.add_argument("--workouts", default=str(WORKOUT_DIR), help="folder for saved workouts (default: ./Workouts)")
+    ap.add_argument("--rides", default=str(RIDE_DIR), help="folder for recorded rides (default: ./Rides)")
+    ap.add_argument("--config", default=str(CONFIG_FILE), help="settings file (default: ./flux_config.json)")
+    ap.add_argument("--logs", default=str(LOG_DIR), help="folder for the log files (default: ./Logs)")
     args = ap.parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
+    WORKOUT_DIR = Path(os.path.abspath(args.workouts))   # abspath keeps the name as written (resolve() would
+    RIDE_DIR = Path(os.path.abspath(args.rides))         # return the old 'rides' casing on Windows)
+    CONFIG_FILE = Path(os.path.abspath(args.config))
+    LOG_DIR = Path(os.path.abspath(args.logs))
+    if not (args.stop or "--help" in sys.argv):
+        setup_logging()
+        log.info("bridge %d starting (Python %s, bleak %s, aiohttp %s)", BRIDGE_VERSION, sys.version.split()[0],
+                 _pkg_version("bleak"), _pkg_version("aiohttp"))
+    else:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
     url = f"http://localhost:{args.port}/{PAGE}"
     owner = port_owner(args.port)
 
@@ -367,6 +788,14 @@ def main():
         asyncio.run(serve(make_app(args.port), args.port, url, not args.no_browser))
     except KeyboardInterrupt:
         pass                        # Ctrl+C: serve() already disconnected the devices and said so
+
+
+def _pkg_version(name):
+    try:
+        from importlib.metadata import version
+        return version(name)
+    except Exception:
+        return "?"
 
 
 def stop_running_bridge(port):
