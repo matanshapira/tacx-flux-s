@@ -196,6 +196,10 @@ class FakeBleakState:
         self.writes: list[tuple[str, str, bytes, bool]] = []
         self.reads: dict[tuple[str, str], bytes] = {}
         self.notify_cbs: dict[tuple[str, str], object] = {}
+        self.client_calls: list[dict] = []
+        self.find_calls: list[str] = []
+        self.active_connects = 0
+        self.max_concurrent_connects = 0
 
 
 FAKE_BLE = FakeBleakState()
@@ -215,6 +219,7 @@ class FakeBleakScanner:
 
     @classmethod
     async def find_device_by_address(cls, addr: str, timeout: float = 10.0):
+        FAKE_BLE.find_calls.append(addr)
         await asyncio.sleep(0.02)
         if addr in FAKE_BLE.find_returns_none:
             return None
@@ -228,28 +233,35 @@ class FakeWinBackend:
 
 
 class FakeBleakClient:
-    def __init__(self, target, disconnected_callback=None, timeout: float = 20.0):
+    def __init__(self, target, disconnected_callback=None, timeout: float = 20.0, winrt=None):
         self.address = target.address if hasattr(target, "address") else str(target)
         self._is_raw_addr = isinstance(target, str)
         self._disc_cb = disconnected_callback
         self.timeout = timeout
+        self.winrt = winrt
         self.is_connected = False
         self.services: list[FakeService] = []
         self._backend = FakeWinBackend() if self.address in FAKE_BLE.direct_connect_allowed else None
+        FAKE_BLE.client_calls.append({"address": self.address, "winrt": winrt, "raw": self._is_raw_addr})
 
     async def connect(self):
-        await asyncio.sleep(0.02)
-        if self._is_raw_addr and self.address not in FAKE_BLE.direct_connect_allowed:
-            raise RuntimeError("direct connect unavailable")
-        plan = FAKE_BLE.fail_attempts.get(self.address)
-        if plan:
-            err = plan.pop(0)
-            if err is not None:
-                raise err
-        entry = FAKE_BLE.devices.get(self.address)
-        self.services = entry[2] if entry else []
-        self.is_connected = True
-        FAKE_BLE.connected_clients.append(self)
+        FAKE_BLE.active_connects += 1
+        FAKE_BLE.max_concurrent_connects = max(FAKE_BLE.max_concurrent_connects, FAKE_BLE.active_connects)
+        try:
+            await asyncio.sleep(0.02)
+            if self._is_raw_addr and self.address not in FAKE_BLE.direct_connect_allowed:
+                raise RuntimeError("direct connect unavailable")
+            plan = FAKE_BLE.fail_attempts.get(self.address)
+            if plan:
+                err = plan.pop(0)
+                if err is not None:
+                    raise err
+            entry = FAKE_BLE.devices.get(self.address)
+            self.services = entry[2] if entry else []
+            self.is_connected = True
+            FAKE_BLE.connected_clients.append(self)
+        finally:
+            FAKE_BLE.active_connects -= 1
 
     async def disconnect(self):
         was = self.is_connected
@@ -618,6 +630,9 @@ class TestFluxBridgeV8E2E(unittest.TestCase):
         flux_bridge.WORKOUT_DIR = tmp_path / "Workouts"
         flux_bridge.RIDE_DIR = tmp_path / "Rides"
         flux_bridge.LOG_DIR = tmp_path / "Logs"
+        self._orig_timings = (flux_bridge.RETRY_SETTLE, flux_bridge.SCAN_STOP_SETTLE, flux_bridge.BLE_CACHE_TTL)
+        flux_bridge.RETRY_SETTLE = 0.05
+        flux_bridge.SCAN_STOP_SETTLE = 0.02
         flux_bridge._ride_stats_cache.clear()
 
         self.port = _free_port()
@@ -657,6 +672,7 @@ class TestFluxBridgeV8E2E(unittest.TestCase):
     def tearDown(self):
         self.bridge.stop()
         flux_bridge.CONFIG_FILE, flux_bridge.WORKOUT_DIR, flux_bridge.RIDE_DIR, flux_bridge.LOG_DIR = self._orig_dirs
+        flux_bridge.RETRY_SETTLE, flux_bridge.SCAN_STOP_SETTLE, flux_bridge.BLE_CACHE_TTL = self._orig_timings
         self.tmp.cleanup()
 
     def _connect_ws(self, origin=None):
@@ -916,6 +932,71 @@ class TestFluxBridgeV8E2E(unittest.TestCase):
                 self.assertFalse(replies[20]["ok"])
                 self.assertIn("cancelled", replies[20]["error"])
                 self.assertTrue(replies[21]["ok"])
+            finally:
+                FakeBleakClient.connect = orig_connect
+        finally:
+            ws.close()
+
+    def test_connectivity_hardening_uncached_retry_ttl_and_serialization(self):
+        ws = self._connect_ws()
+        try:
+            ws.request("hello", 1, claim="takeover")
+
+            # 1. Stale BLE cache (> BLE_CACHE_TTL) must force fresh scan instead of reusing stale handle
+            flux_bridge.BLE_CACHE_TTL = 0.05
+            ws.request("scanStart", 2)
+            tr_dev, tr_adv, _ = FAKE_BLE.devices[self.trainer_addr]
+            FAKE_BLE.scanner_cb(tr_dev, tr_adv)
+            ws.recv_json()  # adv
+            time.sleep(0.08)  # expire cache
+            FAKE_BLE.find_calls.clear()
+            FAKE_BLE.client_calls.clear()
+
+            # 2. Attempt 1 fails -> attempt 2 bypasses Windows GATT cache (use_cached_services=False) and succeeds
+            FAKE_BLE.fail_attempts[self.trainer_addr] = [asyncio.TimeoutError(), None]
+            res, evs = ws.request("connect", 3, address=self.trainer_addr)
+            self.assertTrue(res["ok"])
+            self.assertGreaterEqual(FAKE_BLE.find_calls.count(self.trainer_addr), 2)
+            self.assertIsNone(FAKE_BLE.client_calls[0]["winrt"])
+            self.assertEqual(FAKE_BLE.client_calls[1]["winrt"], {"use_cached_services": False})
+            self.assertTrue(any("fresh GATT" in e.get("text", "") for e in evs if e.get("ev") == "progress"))
+
+            # 3. Subsequent reconnect remembers uncached_addrs and immediately skips poisoned GATT cache on attempt 1
+            ws.request("disconnect", 4, address=self.trainer_addr)
+            FAKE_BLE.client_calls.clear()
+            res2, _ = ws.request("connect", 5, address=self.trainer_addr)
+            self.assertTrue(res2["ok"])
+            self.assertEqual(FAKE_BLE.client_calls[0]["winrt"], {"use_cached_services": False})
+            ws.request("disconnect", 6, address=self.trainer_addr)
+
+            # 4. Concurrent connect requests (trainer + HR) must be serialized by _ble_lock (max concurrency == 1)
+            FAKE_BLE.max_concurrent_connects = 0
+            orig_connect = FakeBleakClient.connect
+
+            async def slower_connect(cli):
+                FAKE_BLE.active_connects += 1
+                FAKE_BLE.max_concurrent_connects = max(FAKE_BLE.max_concurrent_connects, FAKE_BLE.active_connects)
+                try:
+                    await asyncio.sleep(0.12)
+                    entry = FAKE_BLE.devices.get(cli.address)
+                    cli.services = entry[2] if entry else []
+                    cli.is_connected = True
+                    FAKE_BLE.connected_clients.append(cli)
+                finally:
+                    FAKE_BLE.active_connects -= 1
+
+            FakeBleakClient.connect = slower_connect
+            try:
+                ws.send_json({"id": 30, "op": "connect", "address": self.trainer_addr})
+                ws.send_json({"id": 31, "op": "connect", "address": self.hr_addr})
+                replies = {}
+                deadline = time.time() + 5
+                while len(replies) < 2 and time.time() < deadline:
+                    m = ws.recv_json(timeout=2)
+                    if "id" in m:
+                        replies[m["id"]] = m
+                self.assertTrue(replies[30]["ok"] and replies[31]["ok"])
+                self.assertEqual(FAKE_BLE.max_concurrent_connects, 1, "WinRT connects must be serialized!")
             finally:
                 FakeBleakClient.connect = orig_connect
         finally:

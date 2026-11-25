@@ -130,6 +130,9 @@ class MockBridgeV8Server {
     this.workouts = new Map();
     this.rides = new Map(); // id -> { header, lines[], meta }
     this.ftmsRejectNextControlNotPermitted = false;
+    this.ftmsRejectFirstRequestControl = false;
+    this.delayConnectMs = 0;
+    this.pendingConnectTimer = null;
     this.ftmsResRangeHex = '000064000100'; // 0..100 (fits uint8)
     this.ftmsPwrRangeHex = '0000dc050100'; // 0..1500 W
     this.hrBattery = 87;
@@ -232,35 +235,50 @@ class MockBridgeV8Server {
         } else if (op === 'connect') {
           const addr = msg.address;
           send({ ev: 'progress', address: addr, text: 'connecting… (attempt 1/3)' });
-          this.connectedAddrs.add(addr);
-          let name = addr, services = [];
-          if (addr === TRAINER_FTMS_ADDR) {
-            name = 'Tacx Flux 46956';
-            services = [
-              {
-                uuid: FTMS_SVC,
-                chars: [
-                  { uuid: FTMS_BIKE, props: ['notify'] },
-                  { uuid: FTMS_RES_RNG, props: ['read'] },
-                  { uuid: FTMS_PWR_RNG, props: ['read'] },
-                  { uuid: FTMS_CP, props: ['write', 'indicate'] },
-                  { uuid: FTMS_STATUS, props: ['notify'] },
-                ],
-              },
-              { uuid: FEC_SVC, chars: [{ uuid: FEC_RX, props: ['notify'] }, { uuid: FEC_TX, props: ['write-without-response', 'write'] }] },
-            ];
-          } else if (addr === TRAINER_FEC_ADDR) {
-            name = 'Tacx Legacy FEC';
-            services = [{ uuid: FEC_SVC, chars: [{ uuid: FEC_RX, props: ['notify'] }, { uuid: FEC_TX, props: ['write-without-response', 'write'] }] }];
-          } else if (addr === HR_ADDR) {
-            name = 'Polar H10';
-            services = [
-              { uuid: HR_SVC, chars: [{ uuid: HR_MEAS, props: ['notify'] }] },
-              { uuid: BATT_SVC, chars: [{ uuid: BATT_LVL, props: ['read'] }] },
-            ];
+          const finishConnect = () => {
+            this.pendingConnectTimer = null;
+            this.connectedAddrs.add(addr);
+            let name = addr, services = [];
+            if (addr === TRAINER_FTMS_ADDR) {
+              name = 'Tacx Flux 46956';
+              services = [
+                {
+                  uuid: FTMS_SVC,
+                  chars: [
+                    { uuid: FTMS_BIKE, props: ['notify'] },
+                    { uuid: FTMS_RES_RNG, props: ['read'] },
+                    { uuid: FTMS_PWR_RNG, props: ['read'] },
+                    { uuid: FTMS_CP, props: ['write', 'indicate'] },
+                    { uuid: FTMS_STATUS, props: ['notify'] },
+                  ],
+                },
+                { uuid: FEC_SVC, chars: [{ uuid: FEC_RX, props: ['notify'] }, { uuid: FEC_TX, props: ['write-without-response', 'write'] }] },
+              ];
+            } else if (addr === TRAINER_FEC_ADDR) {
+              name = 'Tacx Legacy FEC';
+              services = [{ uuid: FEC_SVC, chars: [{ uuid: FEC_RX, props: ['notify'] }, { uuid: FEC_TX, props: ['write-without-response', 'write'] }] }];
+            } else if (addr === HR_ADDR) {
+              name = 'Polar H10';
+              services = [
+                { uuid: HR_SVC, chars: [{ uuid: HR_MEAS, props: ['notify'] }] },
+                { uuid: BATT_SVC, chars: [{ uuid: BATT_LVL, props: ['read'] }] },
+              ];
+            }
+            send({ id, ok: true, name, services });
+          };
+          if (this.delayConnectMs > 0) {
+            this.pendingConnectTimer = {
+              id, addr,
+              timer: setTimeout(finishConnect, this.delayConnectMs),
+              cancel: () => { clearTimeout(this.pendingConnectTimer?.timer); this.pendingConnectTimer = null; send({ id, ok: false, error: 'cancelled' }); },
+            };
+          } else {
+            finishConnect();
           }
-          send({ id, ok: true, name, services });
         } else if (op === 'disconnect') {
+          if (this.pendingConnectTimer && (!msg.address || this.pendingConnectTimer.addr === msg.address)) {
+            this.pendingConnectTimer.cancel();
+          }
           if (msg.address) this.connectedAddrs.delete(msg.address);
           else this.connectedAddrs.clear();
           send({ id, ok: true });
@@ -280,7 +298,10 @@ class MockBridgeV8Server {
           if ((msg.uuid || '').toLowerCase() === FTMS_CP && bytes.length >= 1) {
             const reqOp = bytes[0];
             let resCode = 0x01;
-            if (this.ftmsRejectNextControlNotPermitted && reqOp !== 0x00) {
+            if (this.ftmsRejectFirstRequestControl && reqOp === 0x00) {
+              this.ftmsRejectFirstRequestControl = false;
+              resCode = 0x05;
+            } else if (this.ftmsRejectNextControlNotPermitted && reqOp !== 0x00) {
               this.ftmsRejectNextControlNotPermitted = false;
               resCode = 0x05;
             }
@@ -531,9 +552,25 @@ async function run() {
       await browser.waitFor(() => document.getElementById('savedList').textContent.includes('Tacx Legacy FEC'), 2000, 'Added FEC trainer');
     });
 
-    // 3. FTMS Connect, Telemetry, Connection Quality Pill, 0x05 Recovery, ERG/Slope/Res (uint8 & sint16) & Keys
-    await test('3. FTMS connect, 0x2AD2 telemetry, connQ pill, 0x05 recovery, uint8/sint16 Res & keys', async () => {
+    // 3. FTMS Connect (including Cancel-While-Connecting + Request Control 0x00 retry!), Telemetry, connQ Pill, 0x05 Recovery, uint8/sint16 Res & Keys
+    await test('3. FTMS connect (cancel-in-flight + 0x00 retry), 0x2AD2 telemetry, connQ pill, 0x05 recovery, uint8/sint16 Res & keys', async () => {
+      // 3a. Clicking Disconnect while Connecting… must send op:"disconnect" to abort stuck connect in the bridge!
+      bridge.ops.length = 0;
+      bridge.delayConnectMs = 2000;
+      await browser.eval(() => {
+        const items = [...document.querySelectorAll('#scanList .dev')];
+        const ftms = items.find(el => el.textContent.includes('Tacx Flux 46956'));
+        [...ftms.querySelectorAll('button')].find(b => b.textContent.trim() === 'Connect').click();
+      });
+      await browser.waitFor(() => document.getElementById('status').textContent.includes('Connecting'), 2000, 'Connecting state');
+      await browser.eval(() => document.getElementById('btnDisconnect').click());
+      await waitUntil(() => bridge.ops.some(o => o.op === 'disconnect' && o.address === TRAINER_FTMS_ADDR), 2500, 'disconnect op sent for in-flight connect');
+      bridge.delayConnectMs = 0;
+      await sleep(100);
+
+      // 3b. Connect with first FTMS Request Control (0x00) failing -> must auto-retry 0x00 once and succeed!
       bridge.writes.length = 0;
+      bridge.ftmsRejectFirstRequestControl = true;
       await browser.eval(() => {
         const items = [...document.querySelectorAll('#scanList .dev')];
         const ftms = items.find(el => el.textContent.includes('Tacx Flux 46956'));
@@ -542,7 +579,7 @@ async function run() {
       await browser.waitFor(() => document.getElementById('status').textContent === 'Connected' && document.getElementById('devinfo').textContent.includes('FTMS'), 5000, 'FTMS connected');
 
       const cpOps = bridge.writes.filter(w => w.uuid === FTMS_CP).map(w => w.bytes[0]);
-      assert.ok(cpOps.includes(0x00) && cpOps.includes(0x07), 'Must send FTMS 0x00 and 0x07');
+      assert.ok(cpOps.filter(x => x === 0x00).length >= 2 && cpOps.includes(0x07), 'Must retry FTMS 0x00 once and send 0x07');
 
       // Default FTP is 200 W -> 190 W = 95% FTP (Z4 Threshold), 75 kg -> 2.5 W/kg, trainer HR = 144
       bridge.pushNotify(TRAINER_FTMS_ADDR, FTMS_BIKE, buildFtmsBikeFrame({ speedKmh: 33.4, cadenceRpm: 91, resistance: 40, powerW: 190, hrBpm: 144 }));

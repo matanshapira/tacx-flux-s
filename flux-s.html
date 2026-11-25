@@ -806,17 +806,17 @@ class FtmsDriver {
     this.ibd = await svc.getCharacteristic(FTMS.BIKE_DATA);
     try { this.ms = await svc.getCharacteristic(FTMS.STATUS); } catch { this.ms = null; }
     try {
-      const v = await (await svc.getCharacteristic(FTMS.RES_RANGE)).readValue();
+      const v = await (await svc.getCharacteristic(FTMS.RES_RANGE)).readValue(5000);
       this.resRange = { min:v.getInt16(0,true), max:v.getInt16(2,true), inc:Math.max(1,v.getUint16(4,true)) };
       log(`FTMS resistance range raw ${this.resRange.min}..${this.resRange.max} step ${this.resRange.inc} (×0.1)`);
     } catch { this.resRange = null; }
     try {
-      const v = await (await svc.getCharacteristic(FTMS.PWR_RANGE)).readValue();
+      const v = await (await svc.getCharacteristic(FTMS.PWR_RANGE)).readValue(5000);
       this.pwrRange = { min:v.getInt16(0,true), max:v.getInt16(2,true) };
       log(`FTMS power range ${this.pwrRange.min}..${this.pwrRange.max} W`);
     } catch { this.pwrRange = null; }
     try {                                                     // Feature: target-setting bit 15 = spin-down control
-      const v = await (await svc.getCharacteristic(FTMS.FEATURE)).readValue();
+      const v = await (await svc.getCharacteristic(FTMS.FEATURE)).readValue(5000);
       this.spinDownSupported = !!(v.getUint32(4, true) & (1 << 15));
     } catch { this.spinDownSupported = null; }
 
@@ -834,8 +834,14 @@ class FtmsDriver {
     if (!this.cpListening) {
       this.cp.addEventListener("characteristicvaluechanged", e => this._onControl(e.target.value));
       await this.cp.startNotifications(); this.cpListening = true;
+      await sleep(150);                       // let WinRT/Tacx finish CCCD indication subscription before 0x00
     }
-    await this.cmd([0x00]);                // Request control
+    try { await this.cmd([0x00]); }           // Request control (retry once if trainer drops first indication)
+    catch (e) {
+      log(`FTMS request control attempt 1 failed (${e.message}) – retrying once`, "w");
+      await sleep(300);
+      await this.cmd([0x00]);
+    }
     log("FTMS: control granted", "o");
     await this.cmd([0x07]).catch(e => log("FTMS start/resume: " + e.message, "w"));
     this.controlEnabled = true;
@@ -1116,7 +1122,7 @@ async function setupDevice(){
       break;
     } catch (e) { lastErr = e; log(`${p.toUpperCase()} not usable: ${e.message}`, "w"); }
   }
-  if (!S.drv) { S.device.gatt.disconnect(); throw lastErr || new Error("no supported protocol"); }
+  if (!S.drv) { await S.device.gatt.disconnect(); throw lastErr || new Error("no supported protocol"); }
   onConnected(`${S.device.name || "Trainer"} · ${S.drv.name}`);
 }
 
@@ -1165,7 +1171,7 @@ async function onGattDisconnected(){
 }
 // The link can go half-open (no disconnect event, but no data either – e.g. the frozen 279 W on 24 Nov):
 // after dataTimeoutSec without any trainer data, drop the link and reconnect.
-function trainerWatchdog(){
+async function trainerWatchdog(){
   const lim = (+cfg("dataTimeoutSec") || 0) * 1000;
   if (!lim || !S.drv || S.drv instanceof DemoDriver || S.reconnecting || !S.device || DM.passive || CAL.active) return;
   const last = Math.max(S.live.ts || 0, S.connectedAt || 0);
@@ -1174,7 +1180,7 @@ function trainerWatchdog(){
   connEvent("noData", { sec:Math.round((Date.now() - last) / 1000) });
   const dev = S.device;
   S.connectedAt = Date.now();
-  try { dev.gatt.disconnect(); } catch {}
+  try { await dev.gatt.disconnect(); } catch {}
   onGattDisconnected();        // the browser may also fire gattserverdisconnected – the S.reconnecting guard dedupes it
 }
 
@@ -1191,7 +1197,9 @@ async function disconnect(){
   const drv = S.drv; S.drv = null;
   if (CAL.active) calFinish(false, "disconnected");
   if (drv) await drv.close();
-  if (S.device && S.device.gatt.connected) S.device.gatt.disconnect();
+  if (S.device && (S.device.gatt.connected || S.device instanceof BridgeDevice)) {
+    try { await S.device.gatt.disconnect(); } catch {}
+  }
   setStatus("disconnected", "Disconnected");
   showDevInfo(""); $("devCard").open = true;
   log("Disconnected");
@@ -2273,7 +2281,7 @@ class BridgeChar {
   }
   addEventListener(type, fn){ if (type === "characteristicvaluechanged") this._l.push(fn); }
   _notify(dv){ this.value = dv; for (const f of this._l) f({ target:this }); }
-  async readValue(){ return hexToDv((await bridge.call("read", { address:this.address, uuid:this.uuid })).data); }
+  async readValue(timeout = 15000){ return hexToDv((await bridge.call("read", { address:this.address, uuid:this.uuid }, timeout)).data); }
   async writeValueWithResponse(d){ await bridge.call("write", { address:this.address, uuid:this.uuid, data:toHex(d), response:true }); }
   async writeValueWithoutResponse(d){ await bridge.call("write", { address:this.address, uuid:this.uuid, data:toHex(d), response:false }); }
   writeValue(d){ return this.properties.write ? this.writeValueWithResponse(d) : this.writeValueWithoutResponse(d); }
@@ -2297,7 +2305,7 @@ class BridgeDevice {
         if (r.name && r.name !== address) dev.name = r.name;
         return dev._server();
       },
-      disconnect(){ this.connected = false; bridge.call("disconnect", { address }).catch(() => {}); },
+      disconnect(){ this.connected = false; return bridge.call("disconnect", { address }).catch(() => {}); },
     };
   }
   addEventListener(type, fn){ if (type === "gattserverdisconnected") this._l.push(fn); }
@@ -2419,7 +2427,7 @@ async function setupHr(){
   const ch = await (await server.getPrimaryService(HR_SVC)).getCharacteristic(HR_MEAS);
   ch.addEventListener("characteristicvaluechanged", e => onHrMeasurement(e.target.value));
   await ch.startNotifications();
-  try { H.battery = (await (await (await server.getPrimaryService(BATT_SVC)).getCharacteristic(BATT_LVL)).readValue()).getUint8(0); }
+  try { H.battery = (await (await (await server.getPrimaryService(BATT_SVC)).getCharacteristic(BATT_LVL)).readValue(5000)).getUint8(0); }
   catch { H.battery = null; }
   H.connected = true;
   log(`Heart-rate monitor connected: ${H.device.name || "HR"}${H.battery != null ? ` (battery ${H.battery}%)` : ""}`, "o");
@@ -2461,10 +2469,13 @@ async function connectHrSaved(entry){
 }
 async function disconnectHr(silent){
   if (!H.device) return;
-  H.user = true; H.connected = false; H.bpm = null;
-  if (H.device.gatt.connected) H.device.gatt.disconnect();
+  const dev = H.device;
+  H.user = true; H.connected = false; H.bpm = null; H.device = null;
+  if (dev.gatt.connected || dev instanceof BridgeDevice) {
+    try { await dev.gatt.disconnect(); } catch {}
+  }
   if (!silent) log("Heart-rate monitor disconnected");
-  H.device = null; renderHrStatus(); renderLive();
+  renderHrStatus(); renderLive();
 }
 async function onHrLost(){
   H.connected = false; H.bpm = null; renderLive();
@@ -2627,6 +2638,7 @@ bridge.on("adv", m => {
 
 async function connectBridgeDevice(address, name){
   if (S.drv) await disconnect();
+  else if (S.device instanceof BridgeDevice) { try { await S.device.gatt.disconnect(); } catch {} }
   await stopScan();
   S.userDisconnect = false; S.wasConnected = false;
   const dev = new BridgeDevice(address, name || address);

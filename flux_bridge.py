@@ -55,8 +55,11 @@ _RIDE_ID = re.compile(r"^[0-9A-Za-z_-]{1,64}$")
 _ride_stats_cache = {}
 BRIDGE_VERSION = 8
 CONNECT_ATTEMPTS = 3
-CONNECT_TIMEOUT = 20          # seconds per attempt (a good connect takes ~2-7 s)
-CONNECT_DEADLINE = 95         # whole connect op (all attempts); the page waits longer than this
+CONNECT_TIMEOUT = 25          # seconds per attempt (bleak 3.1 WinRT default is 30 s)
+CONNECT_DEADLINE = 125        # whole connect op (all 3 attempts); the page waits 150 s
+BLE_CACHE_TTL = 15.0          # ignore cached BLEDevice objects older than 15 s (stale after sleep/drops)
+SCAN_STOP_SETTLE = 0.4        # let Windows BT controller finish stopping scan before GATT connect
+RETRY_SETTLE = 2.0            # let Windows WinRT finish tearing down half-open session between retries
 OPEN_BROWSER_WAIT = 3.5       # after start: give an already open tab time to reconnect before opening a new one
 # Only ONE GUI tab may use Bluetooth at a time. Two tabs = two controllers fighting over the trainer
 # (conflicting ERG targets, control requests, one tab's reconnect dropping the other's link).
@@ -253,10 +256,12 @@ class Session:
         self.scanner = None
         self.clients = {}      # address -> BleakClient (trainer + heart-rate strap at the same time)
         self.seen = {}        # address -> info sent to the GUI
-        self.ble_devices = {}  # address -> BLEDevice (faster connect on Windows)
+        self.ble_devices = {}  # address -> (BLEDevice, monotonic_ts) (fresh scan cache only)
+        self.uncached_addrs = set()  # addresses where Windows GATT cache failed -> force uncached discovery
         self.last_sent = {}
         self.tasks = set()
         self.connecting = {}   # address -> task of the connect op in flight (cancelled by disconnect / a newer connect)
+        self._ble_lock = asyncio.Lock()  # serialize WinRT scan/connect ops so trainer + HR never collide in HCI
         self.active = False    # True for the one tab that owns Bluetooth (see claim())
         self.closed = False
 
@@ -302,13 +307,23 @@ class Session:
             "fec": FEC_SVC in uuids or prev.get("fec", False),
             "hr": HR_SVC in uuids or prev.get("hr", False),
         }
-        self.seen[dev.address] = info
-        self.ble_devices[dev.address] = dev
         now = time.monotonic()
+        self.seen[dev.address] = info
+        self.ble_devices[dev.address] = (dev, now)
         changed = {k: v for k, v in info.items() if k != "rssi"} != {k: v for k, v in prev.items() if k != "rssi"}
         if changed or now - self.last_sent.get(dev.address, 0) >= 0.7:
             self.last_sent[dev.address] = now
             self.emit({"ev": "adv", "device": info})
+
+    def _fresh_ble_device(self, addr):
+        entry = self.ble_devices.get(addr)
+        if not entry:
+            return None
+        dev, ts = entry
+        if time.monotonic() - ts <= BLE_CACHE_TTL:
+            return dev
+        self.ble_devices.pop(addr, None)
+        return None
 
     async def stop_scan(self):
         if self.scanner:
@@ -317,9 +332,12 @@ class Session:
                 await s.stop()
             except Exception:
                 pass
+            return True
+        return False
 
     # ---------- connection ----------
     def _on_disconnect(self, addr, client):
+        self.ble_devices.pop(addr, None)
         if self.clients.get(addr) is client:
             del self.clients[addr]
             log.info("%s disconnected", addr)
@@ -342,6 +360,7 @@ class Session:
         """Disconnect one device, or all when addr is None (also aborts connects in flight)."""
         await self.cancel_connect(addr)
         for a in ([addr] if addr else list(self.clients)):
+            self.ble_devices.pop(a, None)
             c = self.clients.pop(a, None)
             if c:
                 log.info("disconnecting %s", a)
@@ -374,17 +393,26 @@ class Session:
         self.active = True
         return True
 
+    def _make_client(self, target, addr, use_cached=True):
+        kwargs = {
+            "disconnected_callback": lambda c, a=addr: self._on_disconnect(a, c),
+            "timeout": CONNECT_TIMEOUT,
+        }
+        if not use_cached:
+            kwargs["winrt"] = {"use_cached_services": False}
+        return BleakClient(target, **kwargs)
+
     async def _connect_with_retries(self, addr):
-        """Windows often leaves the FIRST connection attempt hanging; a fresh scan + retry then
-        connects within seconds (measured: attempt 1 timed out at 60 s, attempt 2 took 6 s).
-        So: short per-attempt timeout, several attempts, progress reported to the GUI."""
+        """Windows often leaves the FIRST connection attempt hanging or hangs on a stale GATT cache;
+        a fresh scan + uncached GATT discovery + settle pause then connects reliably."""
         last, tried = None, 0
         deadline = time.monotonic() + CONNECT_DEADLINE
         for n in range(1, CONNECT_ATTEMPTS + 1):
-            if n > 1 and deadline - time.monotonic() < CONNECT_TIMEOUT + 10:
+            if n > 1 and deadline - time.monotonic() < CONNECT_TIMEOUT + 5:
                 log.info("no time left for attempt %d/%d", n, CONNECT_ATTEMPTS)
                 break
-            target = self.ble_devices.get(addr) if n == 1 else None
+            use_cached = (n == 1) and (addr not in self.uncached_addrs)
+            target = self._fresh_ble_device(addr) if use_cached else None
             if target is None:
                 self.emit({"ev": "progress", "address": addr, "text": f"looking for {addr}…"})
                 log.info("looking for %s (search up to 10 s)", addr)
@@ -395,40 +423,47 @@ class Session:
                     # Windows can share that link, so try connecting by address without a scan.
                     self.emit({"ev": "progress", "address": addr,
                                "text": "not advertising – trying a direct connection (it may be in use by another app on this PC)…"})
-                    client = await self._connect_direct(addr)
+                    client = await self._connect_direct(addr, use_cached=use_cached)
                     if client:
                         return client
                     raise BridgeError(
                         "device not found – make sure it is powered on (pedal to wake the trainer, wear the HR strap). "
                         "If another app on a phone/tablet is connected to it, the device may accept only that one connection")
-                self.ble_devices[addr] = target
+                self.ble_devices[addr] = (target, time.monotonic())
             tried = n
-            self.emit({"ev": "progress", "address": addr, "text": f"connecting… (attempt {n}/{CONNECT_ATTEMPTS})"})
-            log.info("connecting to %s (attempt %d/%d)", addr, n, CONNECT_ATTEMPTS)
-            client = BleakClient(target, disconnected_callback=lambda c, a=addr: self._on_disconnect(a, c),
-                                 timeout=CONNECT_TIMEOUT)
+            mode_note = "" if use_cached else ", fresh GATT"
+            self.emit({"ev": "progress", "address": addr, "text": f"connecting… (attempt {n}/{CONNECT_ATTEMPTS}{mode_note})"})
+            log.info("connecting to %s (attempt %d/%d%s)", addr, n, CONNECT_ATTEMPTS, mode_note)
+            client = self._make_client(target, addr, use_cached=use_cached)
             try:
                 await asyncio.wait_for(client.connect(), CONNECT_TIMEOUT + 5)   # hard limit on top of bleak's own
-                log.info("connected to %s (attempt %d/%d)", addr, n, CONNECT_ATTEMPTS)
+                log.info("connected to %s (attempt %d/%d%s)", addr, n, CONNECT_ATTEMPTS, mode_note)
+                if not use_cached:
+                    self.uncached_addrs.add(addr)       # uncached discovery worked; keep using it this session
                 return client
             except asyncio.CancelledError:
+                self.ble_devices.pop(addr, None)
                 await safe_disconnect(client)          # never leave a half-open session behind
                 raise
             except Exception as e:
                 last = e
+                self.ble_devices.pop(addr, None)       # never reuse a failed BLEDevice handle
+                self.uncached_addrs.add(addr)          # bypass potentially poisoned Windows GATT cache next try
                 log.warning("attempt %d/%d failed: %s%s", n, CONNECT_ATTEMPTS, describe_error(e),
-                            " – retrying with a fresh search" if n < CONNECT_ATTEMPTS else "")
+                            " – retrying with a fresh search (bypassing GATT cache)" if n < CONNECT_ATTEMPTS else "")
                 await safe_disconnect(client)          # release a half-open session before retrying
-                await asyncio.sleep(1)
+                if n < CONNECT_ATTEMPTS:
+                    await asyncio.sleep(RETRY_SETTLE)
         rssi = self.seen.get(addr, {}).get("rssi")
         raise BridgeError(
             f"found the device but it didn't finish connecting after {tried} attempt(s) "
             f"({describe_error(last)}). Try again; if it keeps failing: pedal to wake the trainer, close other "
-            f"apps/phones connected to it, move the PC or a USB Bluetooth dongle closer"
+            f"apps/phones connected to it, toggle Windows Bluetooth off/on (clears stale cache), move the PC or "
+            f"USB Bluetooth dongle closer"
             + (f" (signal now {rssi} dBm)" if rssi is not None else "") + ", or power-cycle the trainer.")
 
-    async def _connect_direct(self, addr):
-        client = BleakClient(addr, disconnected_callback=lambda c, a=addr: self._on_disconnect(a, c), timeout=CONNECT_TIMEOUT)
+    async def _connect_direct(self, addr, use_cached=True):
+        client = self._make_client(addr, addr, use_cached=use_cached)
         backend = getattr(client, "_backend", None)
         if backend is None or not hasattr(backend, "_device_info"):
             return None                                   # only the Windows backend can skip the scan
@@ -558,13 +593,15 @@ class Session:
             await self.stop_scan()
             return {}
         if op == "connect":
-            await self.stop_scan()          # Windows connects more reliably when not scanning
             addr = msg["address"]
             await self.disconnect(addr)     # also aborts an older connect to the same device still in flight
             me = asyncio.current_task()
             self.connecting[addr] = me
             try:
-                client = await self._connect_with_retries(addr)
+                async with self._ble_lock:
+                    if await self.stop_scan():      # Windows connects more reliably after scan stops + settles
+                        await asyncio.sleep(SCAN_STOP_SETTLE)
+                    client = await self._connect_with_retries(addr)
             finally:
                 if self.connecting.get(addr) is me:
                     del self.connecting[addr]
@@ -575,7 +612,8 @@ class Session:
             if not client.is_connected:                 # dropped before the disconnect callback could see it
                 self.clients.pop(addr, None)
                 raise BridgeError("the device disconnected right after connecting – try again")
-            target = self.ble_devices.get(addr, addr)
+            entry = self.ble_devices.get(addr)
+            target = entry[0] if entry else addr
             services = [
                 {"uuid": s.uuid.lower(),
                  "chars": [{"uuid": c.uuid.lower(), "props": list(c.properties)} for c in s.characteristics]}
