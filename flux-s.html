@@ -1,0 +1,4884 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tacx Flux S · Live Control</title>
+<style>
+  :root {
+    --bg: #10151e;
+    --surface: #18202c;
+    --surface-2: #1f2938;
+    --surface-3: #283447;
+    --input-bg: #111722;
+    --border: #2a3548;
+    --border-soft: #222c3c;
+    --text: #eef3fb;
+    --text-muted: #8b9bb4;
+    --text-dim: #5e6f88;
+    --blue: #2596ff;
+    --blue-hover: #3ca3ff;
+    --power: #facc15;
+    --cad: #2dd4bf;
+    --spd: #38bdf8;
+    --hr: #fb7185;
+    --erg-bar: #facc15;
+    --sim-bar: #8b5cf6;
+    --res-bar: #2dd4bf;
+    --ok: #22c55e;
+    --ok-bg: rgba(34, 197, 94, 0.14);
+    --ok-border: rgba(34, 197, 94, 0.42);
+    --warn: #f59e0b;
+    --err: #ef4444;
+    --err-bg: rgba(239, 68, 68, 0.16);
+    --err-border: rgba(239, 68, 68, 0.45);
+    --radius: 12px;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13.5px;
+    line-height: 1.4;
+  }
+
+  button, input, select {
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--text);
+  }
+
+  button {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 12px;
+    cursor: pointer;
+    transition: background 0.14s, border-color 0.14s, opacity 0.14s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+  button:hover:not(:disabled) { background: var(--surface-3); border-color: #3c4c68; }
+  button:disabled { opacity: 0.42; cursor: not-allowed; }
+  button.primary { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 600; }
+  button.primary:hover:not(:disabled) { background: var(--blue-hover); border-color: var(--blue-hover); }
+  button.danger-soft { background: rgba(239, 68, 68, 0.14); border-color: rgba(239, 68, 68, 0.4); color: #fca5a5; }
+  button.danger-soft:hover:not(:disabled) { background: rgba(239, 68, 68, 0.25); }
+  button.ghost { background: transparent; border-color: transparent; color: var(--text-muted); padding: 4px 7px; }
+  button.ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+  button.sm { padding: 4px 10px; font-size: 12px; border-radius: 7px; }
+  button.icon-btn {
+    padding: 3px 6px;
+    font-size: 12px;
+    min-width: 27px;
+    height: 27px;
+    border-radius: 6px;
+    background: var(--surface-2);
+    color: var(--text-muted);
+  }
+  button.icon-btn:hover:not(:disabled) { color: var(--text); }
+
+  input[type="text"], input[type="number"], select {
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 5px 9px;
+    outline: none;
+  }
+  input[type="text"]:focus, input[type="number"]:focus, select:focus {
+    border-color: var(--blue);
+  }
+  input[type="range"] {
+    width: 100%;
+    accent-color: var(--blue);
+    cursor: pointer;
+    height: 6px;
+  }
+  input[type="checkbox"] {
+    accent-color: var(--blue);
+    cursor: pointer;
+    width: 14px;
+    height: 14px;
+    margin: 0;
+  }
+
+  /* Header */
+  header {
+    padding: 12px 18px 8px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    max-width: 1680px;
+    margin: 0 auto;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .brand h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 11px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
+  .status-pill.connected { background: var(--ok-bg); border-color: var(--ok-border); color: #86efac; }
+  .status-pill.connecting { background: rgba(245, 158, 11, 0.16); border-color: rgba(245, 158, 11, 0.45); color: #fde68a; }
+  .status-pill.failed { background: var(--err-bg); border-color: var(--err-border); color: #fca5a5; }
+  .status-pill.demo { background: rgba(37, 150, 255, 0.18); border-color: rgba(37, 150, 255, 0.48); color: #7dd3fc; }
+  .status-pill.hr-pill { background: rgba(251, 113, 133, 0.15); border-color: rgba(251, 113, 133, 0.42); color: #fda4af; }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .proto-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 10px 3px 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .proto-wrap select {
+    background: transparent;
+    border: none;
+    padding: 3px 2px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .proto-wrap select option { background: var(--surface); color: var(--text); }
+
+  /* Banner */
+  .banner {
+    margin: 4px 18px 6px;
+    padding: 9px 14px;
+    border-radius: 9px;
+    font-size: 13px;
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    max-width: 1644px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .banner.show { display: flex; }
+  .banner.warn { background: rgba(245, 158, 11, 0.14); border: 1px solid rgba(245, 158, 11, 0.45); color: #fde68a; }
+  .banner.err { background: var(--err-bg); border: 1px solid var(--err-border); color: #fecaca; }
+
+  /* Main 2-column grid */
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 375px;
+    gap: 12px;
+    padding: 6px 18px 24px;
+    max-width: 1680px;
+    margin: 0 auto;
+    align-items: start;
+  }
+  @media (max-width: 1120px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+  .col-main, .col-side {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  /* Cards */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 13px 14px;
+    min-width: 0;
+  }
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .card-title {
+    margin: 0;
+    font-size: 11.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--text-muted);
+  }
+
+  /* Readout tiles (5 per row) */
+  .tiles-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
+  }
+  @media (max-width: 900px) {
+    .tiles-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+  @media (max-width: 560px) {
+    .tiles-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  .tile {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 11px 13px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 98px;
+    transition: opacity 0.25s;
+  }
+  .tile.stale .tile-val,
+  .tile.stale .tile-val-stack,
+  .tile.stale .tile-sub {
+    color: var(--text-dim) !important;
+    opacity: 0.55;
+  }
+  .tile-label {
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+  }
+  .tile-val {
+    font-size: 30px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.12;
+    margin: 4px 0 3px;
+    letter-spacing: -0.02em;
+  }
+  .tile-val.power-c { color: var(--power); }
+  .tile-val.cad-c { color: var(--cad); }
+  .tile-val.spd-c { color: var(--spd); }
+  .tile-val.hr-c { color: var(--hr); }
+  .tile-unit {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-muted);
+    margin-left: 3px;
+  }
+  .tile-val-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin: 2px 0;
+  }
+  .ftp-main {
+    font-size: 23px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.15;
+  }
+  .wkg-line {
+    font-size: 15px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+  }
+  .tile-sub {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-wrap: wrap;
+    min-height: 16px;
+  }
+  .zone-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #0b0f17;
+  }
+
+  /* Live Chart */
+  .chart-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  .chart-legend {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    font-size: 11.5px;
+    color: var(--text-muted);
+    flex-wrap: wrap;
+  }
+  .legend-item { display: inline-flex; align-items: center; gap: 5px; }
+  .legend-swatch { width: 12px; height: 2.5px; border-radius: 2px; display: inline-block; }
+  .legend-swatch.dashed { background: none; border-top: 2px dashed #cbd5e1; height: 0; }
+  .window-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .window-wrap select {
+    padding: 3px 8px;
+    font-size: 12px;
+    border-radius: 7px;
+  }
+  .chart-wrap {
+    position: relative;
+    width: 100%;
+    height: 225px;
+  }
+  .chart-wrap canvas { width: 100%; height: 100%; display: block; }
+
+  /* Workout Card */
+  .player-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .player-step-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .player-next {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .player-countdown {
+    font-size: 38px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+    line-height: 1;
+    color: var(--text);
+  }
+  .player-controls {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .progress-track {
+    height: 5px;
+    background: var(--input-bg);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-bottom: 7px;
+  }
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--blue);
+    transition: width 0.25s linear;
+  }
+  .player-meta-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .profile-wrap {
+    width: 100%;
+    height: 100px;
+    background: var(--input-bg);
+    border: 1px solid var(--border-soft);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .profile-wrap canvas { width: 100%; height: 100%; display: block; }
+  .profile-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11.5px;
+    color: var(--text-muted);
+    margin-top: 6px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  details.edit-wk > summary {
+    cursor: pointer;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-muted);
+    user-select: none;
+    padding: 4px 0 8px;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  details.edit-wk > summary::before { content: '▸'; display: inline-block; transition: transform 0.15s; }
+  details.edit-wk[open] > summary::before { content: '▾'; }
+  details.edit-wk > summary:hover { color: var(--text); }
+
+  .wk-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .wk-toolbar input.wk-name {
+    flex: 1;
+    min-width: 160px;
+    font-weight: 600;
+  }
+
+  .wk-import-report {
+    display: none;
+    margin-bottom: 10px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    background: rgba(37, 150, 255, 0.12);
+    border: 1px solid rgba(37, 150, 255, 0.35);
+    color: #bae6fd;
+  }
+  .wk-import-report.warn { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.42); color: #fde68a; }
+  .wk-import-report.err { background: var(--err-bg); border-color: var(--err-border); color: #fecaca; }
+  .wk-import-report.show { display: block; }
+  .wk-import-report ul { margin: 5px 0 0 18px; padding: 0; }
+
+  .block-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+  }
+  .block-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  .block-head input.blk-name { width: 210px; max-width: 100%; font-weight: 600; }
+  .block-head input.blk-rep { width: 58px; text-align: center; }
+  .block-dur { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .block-head .spacer { flex: 1; }
+
+  .step-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+  }
+  .step-table th {
+    text-align: left;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    padding: 4px 6px 6px;
+    font-weight: 700;
+  }
+  .step-table td {
+    padding: 4px 6px;
+    vertical-align: middle;
+  }
+  .step-table td.row-num { color: var(--text-dim); width: 24px; font-variant-numeric: tabular-nums; }
+  .step-table input.step-dur { width: 80px; font-variant-numeric: tabular-nums; }
+  .step-table select.step-mode { width: 112px; }
+  .step-table input.step-target { width: 82px; font-variant-numeric: tabular-nums; }
+  .step-unit { color: var(--text-muted); font-size: 12px; margin-left: 5px; }
+  .block-foot { margin-top: 8px; }
+
+  /* Devices Card */
+  .transport-pill {
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
+  .transport-pill.bridge { background: var(--ok-bg); border-color: var(--ok-border); color: #86efac; }
+  .transport-pill.webble { background: rgba(56, 189, 248, 0.14); border-color: rgba(56, 189, 248, 0.4); color: #7dd3fc; }
+  .transport-pill.stopped { background: rgba(245, 158, 11, 0.14); border-color: rgba(245, 158, 11, 0.45); color: #fde68a; }
+
+  .sub-section-title {
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin: 12px 0 6px;
+  }
+  .hr-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 9px 10px;
+    border-radius: 9px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+  .hr-row-info { min-width: 0; flex: 1; }
+  .hr-row-title { font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .hr-row-status { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .scan-box {
+    margin-top: 8px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--input-bg);
+    overflow: hidden;
+    display: none;
+  }
+  .scan-box.show { display: block; }
+  .scan-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .scan-list { max-height: 220px; overflow-y: auto; }
+  .scan-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 7px;
+    padding: 7px 9px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .scan-item:last-child { border-bottom: none; }
+
+  .saved-list { display: flex; flex-direction: column; gap: 7px; }
+  .saved-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 7px;
+    padding: 8px 10px;
+    border-radius: 9px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+  .saved-empty {
+    padding: 10px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-dim);
+    background: var(--input-bg);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+  }
+  .dev-info { min-width: 0; flex: 1; }
+  .dev-name { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dev-meta { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 1px; }
+  .dev-meta-line { font-size: 10.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 4px;
+    text-transform: uppercase;
+  }
+  .badge.ftms { background: rgba(56, 189, 248, 0.2); color: #7dd3fc; }
+  .badge.fec { background: rgba(245, 158, 11, 0.2); color: #fcd34d; }
+  .badge.hr { background: rgba(251, 113, 133, 0.22); color: #fda4af; }
+
+  .rssi-bars { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 11px; }
+  .rssi-bars span { width: 3px; background: var(--surface-3); border-radius: 1px; }
+  .rssi-bars span.on { background: var(--ok); }
+  .rssi-bars.weak span.on { background: var(--warn); }
+  .rssi-bars.poor span.on { background: var(--err); }
+
+  .star-btn {
+    background: transparent;
+    border: none;
+    padding: 2px;
+    font-size: 16px;
+    color: var(--text-dim);
+  }
+  .star-btn.on { color: #facc15; }
+  .star-btn:hover { background: transparent; color: #fde047; }
+
+  /* Trainer Mode Card */
+  .mode-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+  .mode-tab {
+    padding: 8px 6px;
+    font-weight: 600;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
+  .mode-tab.active {
+    background: var(--blue);
+    border-color: var(--blue);
+    color: #fff;
+  }
+  .mode-pane { display: none; }
+  .mode-pane.active { display: block; }
+
+  .big-target-center {
+    text-align: center;
+    margin-bottom: 10px;
+  }
+  .big-target {
+    font-size: 40px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+  }
+  .big-target small { font-size: 16px; color: var(--text-muted); font-weight: 500; margin-left: 3px; }
+  .target-meta { font-size: 12px; color: var(--text-muted); margin-top: 3px; font-variant-numeric: tabular-nums; }
+
+  .step-btn-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    margin: 10px 0 12px;
+  }
+  .exact-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .exact-row label { font-size: 12.5px; color: var(--text-muted); }
+  .exact-row input { width: 96px; font-variant-numeric: tabular-nums; }
+
+  .mode-desc {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+    line-height: 1.35;
+  }
+
+  .slope-extras {
+    margin: 10px 0;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-soft);
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+  }
+  .slope-extras .field { display: flex; flex-direction: column; gap: 3px; }
+  .slope-extras .field label { font-size: 11px; color: var(--text-muted); }
+  .slope-extras .field input { width: 100%; }
+
+  .ack-bar {
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+  .ack-bar.ok { background: var(--ok-bg); border-color: var(--ok-border); color: #86efac; }
+  .ack-bar.err { background: var(--err-bg); border-color: var(--err-border); color: #fca5a5; }
+  .ack-bar.pending { background: rgba(245, 158, 11, 0.14); border-color: rgba(245, 158, 11, 0.4); color: #fde68a; }
+
+  .kbd-hint { font-size: 11px; color: var(--text-dim); }
+  kbd {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0 4px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-muted);
+  }
+
+  /* Session Card */
+  .session-btns { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 10px; }
+  .setting-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    margin-top: 10px;
+  }
+  .setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .setting-row label { font-size: 12px; color: var(--text-muted); flex: 1; }
+  .setting-row input { width: 82px; font-variant-numeric: tabular-nums; }
+  .field-err { font-size: 11px; color: #fca5a5; text-align: right; min-height: 0; }
+  .samples-note { font-size: 11.5px; color: var(--text-dim); margin-top: 8px; }
+
+  .check-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  /* Log Card */
+  .log-box {
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    height: 175px;
+    overflow-y: auto;
+    padding: 8px 9px;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.45;
+  }
+  .log-line { margin-bottom: 4px; word-break: break-word; }
+  .log-ts { color: var(--text-dim); margin-right: 6px; }
+  .log-msg.ok { color: #86efac; }
+  .log-msg.warn { color: #fde68a; }
+  .log-msg.err { color: #f87171; }
+  .log-msg.info { color: var(--text-muted); }
+
+  .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .muted { color: var(--text-muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>Tacx Flux S · Live Control</h1>
+    <div id="trainerStatusPill" class="status-pill">
+      <span id="trainerStatusText">Disconnected</span>
+    </div>
+    <div id="hrHeaderPill" class="status-pill hr-pill" style="display:none">
+      <span id="hrHeaderText">❤ HR</span>
+    </div>
+  </div>
+
+  <div class="header-actions">
+    <div class="proto-wrap">
+      <span>Protocol</span>
+      <select id="protocolSelect" title="Trainer Bluetooth protocol">
+        <option value="auto">Auto (FTMS → FE-C)</option>
+        <option value="ftms">FTMS only</option>
+        <option value="fec">FE-C only</option>
+      </select>
+    </div>
+    <button id="btnHeaderConnect" class="primary">Connect</button>
+    <button id="btnDemo">Demo mode</button>
+    <button id="btnDisconnect" disabled>Disconnect</button>
+  </div>
+</header>
+
+<div id="globalBanner" class="banner warn">
+  <span id="globalBannerText"></span>
+  <button class="sm ghost" onclick="this.parentElement.classList.remove('show')">✕</button>
+</div>
+
+<main class="layout">
+  <!-- LEFT COLUMN -->
+  <div class="col-main">
+
+    <!-- Readout Tiles (5 per row) -->
+    <section class="tiles-grid">
+      <div class="tile" id="tilePower">
+        <div class="tile-label"><span>POWER · 3 S AVG</span></div>
+        <div class="tile-val power-c"><span id="valPower">—</span><span class="tile-unit">W</span></div>
+        <div class="tile-sub" id="subPower">now — W · target 150 W</div>
+      </div>
+
+      <div class="tile" id="tileFtp">
+        <div class="tile-label"><span>% FTP · W/KG</span><span id="valZoneBadge" class="zone-badge" style="display:none">Z1</span></div>
+        <div class="tile-val-stack">
+          <div class="ftp-main" id="valPctFtpWrap"><span id="valPctFtp">—</span><span class="tile-unit">% FTP</span></div>
+          <div class="wkg-line"><span id="valWkg">—</span><span class="tile-unit">W/kg</span></div>
+        </div>
+        <div class="tile-sub" id="subFtp">FTP 250 W · 75 kg</div>
+      </div>
+
+      <div class="tile" id="tileCadence">
+        <div class="tile-label">CADENCE</div>
+        <div class="tile-val cad-c"><span id="valCadence">—</span><span class="tile-unit">rpm</span></div>
+        <div class="tile-sub">&nbsp;</div>
+      </div>
+
+      <div class="tile" id="tileSpeed">
+        <div class="tile-label">SPEED</div>
+        <div class="tile-val spd-c"><span id="valSpeed">—</span><span class="tile-unit">km/h</span></div>
+        <div class="tile-sub">&nbsp;</div>
+      </div>
+
+      <div class="tile" id="tileHr">
+        <div class="tile-label"><span>HEART RATE</span><span id="valHrZoneBadge" class="zone-badge" style="display:none">Z1</span></div>
+        <div class="tile-val hr-c"><span id="valHr">—</span><span class="tile-unit">bpm</span></div>
+        <div class="tile-sub" id="subHr">no HR monitor</div>
+      </div>
+
+      <div class="tile" id="tileTime">
+        <div class="tile-label">TIME</div>
+        <div class="tile-val"><span id="valTime">0:00:00</span></div>
+        <div class="tile-sub" id="subTime">Idle</div>
+      </div>
+
+      <div class="tile" id="tileDistance">
+        <div class="tile-label">DISTANCE</div>
+        <div class="tile-val"><span id="valDistance">0.00</span><span class="tile-unit">km</span></div>
+        <div class="tile-sub">&nbsp;</div>
+      </div>
+
+      <div class="tile" id="tileAvgPower">
+        <div class="tile-label">AVG / MAX POWER</div>
+        <div class="tile-val"><span id="valAvgPower">—</span><span class="tile-unit">/ <span id="valMaxPower">—</span> W</span></div>
+        <div class="tile-sub" id="subAvgPower">avg —% FTP · — W/kg</div>
+      </div>
+
+      <div class="tile" id="tileWork">
+        <div class="tile-label">WORK</div>
+        <div class="tile-val"><span id="valWork">0</span><span class="tile-unit">kJ</span></div>
+        <div class="tile-sub">&nbsp;</div>
+      </div>
+
+      <div class="tile" id="tileAvgHr">
+        <div class="tile-label">AVG / MAX HR</div>
+        <div class="tile-val"><span id="valAvgHr">—</span><span class="tile-unit">/ <span id="valMaxHr">—</span> bpm</span></div>
+        <div class="tile-sub" id="subAvgHr">&nbsp;</div>
+      </div>
+    </section>
+
+    <!-- Live Chart Card -->
+    <section class="card">
+      <div class="chart-top">
+        <div class="chart-legend">
+          <span class="legend-item"><span class="legend-swatch" style="background:var(--power)"></span>Power (W, left)</span>
+          <span class="legend-item"><span class="legend-swatch dashed"></span>ERG target</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:var(--cad)"></span>Cadence (rpm, right)</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:var(--spd)"></span>Speed (km/h, right)</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:var(--hr)"></span>Heart rate (bpm, right)</span>
+        </div>
+        <div class="window-wrap">
+          <span>Window</span>
+          <select id="chartWindowSelect" title="Chart time window">
+            <option value="60">1 min</option>
+            <option value="120">2 min</option>
+            <option value="180" selected>3 min</option>
+            <option value="300">5 min</option>
+            <option value="600">10 min</option>
+            <option value="900">15 min</option>
+            <option value="1800">30 min</option>
+          </select>
+        </div>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="telemetryCanvas"></canvas>
+      </div>
+    </section>
+
+    <!-- Workout Builder & Player Card -->
+    <section class="card" id="workoutCard">
+      <div class="card-header" style="margin-bottom:8px">
+        <h2 class="card-title">WORKOUT</h2>
+      </div>
+
+      <!-- Player -->
+      <div class="player-top">
+        <div>
+          <div class="player-step-title" id="plStepTitle">Ready</div>
+          <div class="player-next" id="plNextStep">Next: —</div>
+        </div>
+        <div class="player-countdown" id="plCountdown">0:00</div>
+      </div>
+
+      <div class="player-controls">
+        <button id="btnPlStart" class="primary">▶ Start workout</button>
+        <button id="btnPlPause" disabled>⏸ Pause</button>
+        <button id="btnPlBack" disabled>⏮ Back</button>
+        <button id="btnPlSkip" disabled>Skip ⏭</button>
+        <button id="btnPlStop" disabled>⏹ Stop</button>
+      </div>
+
+      <div class="progress-track"><div class="progress-fill" id="plProgressFill"></div></div>
+
+      <div class="player-meta-row">
+        <span id="plElapsedTotal" style="font-variant-numeric:tabular-nums">0:00 / 0:00</span>
+        <label class="check-row">
+          <input type="checkbox" id="chkBeeps" checked> Beep on step change
+        </label>
+      </div>
+
+      <!-- Profile bar chart -->
+      <div class="profile-wrap">
+        <canvas id="profileCanvas"></canvas>
+      </div>
+      <div class="profile-footer">
+        <div class="chart-legend">
+          <span class="legend-item"><span class="legend-swatch" style="background:var(--erg-bar)"></span>ERG</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:var(--sim-bar)"></span>Slope</span>
+          <span class="legend-item"><span class="legend-swatch" style="background:var(--res-bar)"></span>Resistance</span>
+        </div>
+        <span id="wkTotalMeta">Total 0:00 · 0 steps</span>
+      </div>
+
+      <!-- Collapsible Builder -->
+      <details class="edit-wk" open>
+        <summary>Edit workout</summary>
+
+        <div class="wk-toolbar">
+          <input type="text" id="wkNameInput" class="wk-name" placeholder="Workout name…">
+          <select id="wkLibrarySelect" title="Saved workouts"></select>
+          <button id="btnWkSave" class="sm">Save</button>
+          <button id="btnWkDelete" class="sm">Delete</button>
+          <button id="btnWkNew" class="sm">New</button>
+          <button id="btnWkExportXlsx" class="sm">⬇ Excel</button>
+          <button id="btnWkExportJson" class="sm">⬇ JSON</button>
+          <button id="btnWkImport" class="sm">⬆ Import</button>
+          <input id="wkImportFile" type="file" accept=".xlsx,.xls,.csv,.json" style="display:none">
+        </div>
+
+        <div id="wkImportReport" class="wk-import-report"></div>
+
+        <div id="wkBlocksContainer"></div>
+        <button id="btnAddBlock" class="sm">+ Block</button>
+      </details>
+    </section>
+
+  </div>
+
+  <!-- RIGHT COLUMN -->
+  <div class="col-side">
+
+    <!-- Devices Card (Top of Right Column) -->
+    <section class="card" id="devicesCard">
+      <div class="card-header">
+        <h2 class="card-title">DEVICES</h2>
+        <div class="row">
+          <span id="transportPill" class="transport-pill">Checking…</span>
+          <button id="btnStopBridge" class="sm" style="display:none" title="Disconnect all devices and stop flux_bridge.py">⏻ Stop bridge</button>
+        </div>
+      </div>
+
+      <div class="row" style="margin-bottom:6px">
+        <button id="btnSearchDevices" class="primary sm">🔍 Search devices</button>
+        <label class="check-row" style="font-size:12px">
+          <input type="checkbox" id="chkTrainersOnly" checked> Trainers &amp; HR only
+        </label>
+      </div>
+      <div class="muted" style="font-size:11.5px; margin-bottom:4px">
+        Click Search to list nearby trainers and heart-rate monitors.
+      </div>
+
+      <!-- Live scan panel (Bridge mode) -->
+      <div id="scanBox" class="scan-box">
+        <div class="scan-head">
+          <span id="scanStatusText">Scanning…</span>
+          <button id="btnScanStop" class="sm">Stop</button>
+        </div>
+        <div id="scanList" class="scan-list"></div>
+      </div>
+
+      <!-- Heart-rate monitor sub-section -->
+      <div class="sub-section-title">HEART-RATE MONITOR</div>
+      <div class="hr-row">
+        <div class="hr-row-info">
+          <div class="hr-row-title"><span style="color:var(--hr)">❤</span> <span id="hrRowTitle">No heart-rate monitor</span></div>
+          <div class="hr-row-status" id="hrRowStatus">Search, then Connect HR on your strap…</div>
+        </div>
+        <div class="row">
+          <button id="btnSearchHr" class="sm">Search HR</button>
+          <button id="btnDisconnectHr" class="sm" disabled>Disconnect</button>
+        </div>
+      </div>
+
+      <!-- Saved devices -->
+      <div class="sub-section-title">SAVED DEVICES</div>
+      <div id="savedDevicesList" class="saved-list"></div>
+
+      <div style="margin-top:10px">
+        <label class="check-row">
+          <input type="checkbox" id="chkAutoConnect" checked> Auto-connect to the ★ default device on start
+        </label>
+      </div>
+    </section>
+
+    <!-- Trainer Mode Card -->
+    <section class="card">
+      <div class="card-header">
+        <h2 class="card-title">TRAINER MODE</h2>
+      </div>
+
+      <div class="mode-tabs">
+        <button class="mode-tab active" data-mode="erg">ERG</button>
+        <button class="mode-tab" data-mode="sim">Slope</button>
+        <button class="mode-tab" data-mode="res">Resistance</button>
+      </div>
+
+      <!-- ERG Pane -->
+      <div class="mode-pane active" id="paneErg">
+        <div class="big-target-center">
+          <div class="big-target"><span id="ergReadout">150</span><small>W</small></div>
+          <div class="target-meta" id="ergMeta">60% of FTP (250 W) · 2.0 W/kg</div>
+        </div>
+        <input type="range" id="ergSlider" min="0" max="1500" step="5" value="150">
+        <div class="step-btn-grid">
+          <button data-adj="erg" data-delta="-25">−25</button>
+          <button data-adj="erg" data-delta="-5">−5</button>
+          <button data-adj="erg" data-delta="5">+5</button>
+          <button data-adj="erg" data-delta="25">+25</button>
+        </div>
+        <div class="exact-row">
+          <label for="ergInput">Exact target (W)</label>
+          <input type="number" id="ergInput" min="0" max="1500" step="1" value="150">
+        </div>
+        <div class="mode-desc">Trainer holds this power regardless of cadence/gear. Flux S max ≈ 1500 W.</div>
+      </div>
+
+      <!-- Slope Pane -->
+      <div class="mode-pane" id="paneSim">
+        <div class="big-target-center">
+          <div class="big-target"><span id="simReadout">0.0</span><small>%</small></div>
+          <div class="target-meta">Road grade simulation (−10% to +15%)</div>
+        </div>
+        <input type="range" id="simSlider" min="-10" max="15" step="0.5" value="0">
+        <div class="step-btn-grid">
+          <button data-adj="sim" data-delta="-2">−2%</button>
+          <button data-adj="sim" data-delta="-0.5">−0.5</button>
+          <button data-adj="sim" data-delta="0.5">+0.5</button>
+          <button data-adj="sim" data-delta="2">+2%</button>
+        </div>
+        <div class="exact-row">
+          <label for="simInput">Exact grade (%)</label>
+          <input type="number" id="simInput" min="-10" max="15" step="0.1" value="0">
+        </div>
+        <div class="slope-extras">
+          <div class="field">
+            <label for="simWind">Wind (m/s)</label>
+            <input type="number" id="simWind" step="0.5" min="-30" max="30" value="0">
+          </div>
+          <div class="field">
+            <label for="simCrr">Crr (rolling)</label>
+            <input type="number" id="simCrr" step="0.0005" min="0.001" max="0.025" value="0.004">
+          </div>
+          <div class="field">
+            <label for="simCw">Cw (kg/m)</label>
+            <input type="number" id="simCw" step="0.01" min="0.1" max="2.5" value="0.51">
+          </div>
+          <div class="field">
+            <label for="simBikeWeight">Bike weight (kg)</label>
+            <input type="number" id="simBikeWeight" step="0.5" min="3" max="30" value="9.0">
+          </div>
+          <div class="field" style="grid-column: span 2">
+            <label for="simRiderWeight">Rider weight (kg — synced with Session)</label>
+            <input type="number" id="simRiderWeight" step="0.5" min="30" max="200" value="75">
+          </div>
+        </div>
+      </div>
+
+      <!-- Resistance Pane -->
+      <div class="mode-pane" id="paneRes">
+        <div class="big-target-center">
+          <div class="big-target"><span id="resReadout">25</span><small>%</small></div>
+          <div class="target-meta">Direct brake resistance (0–100%)</div>
+        </div>
+        <input type="range" id="resSlider" min="0" max="100" step="1" value="25">
+        <div class="step-btn-grid">
+          <button data-adj="res" data-delta="-10">−10</button>
+          <button data-adj="res" data-delta="-2">−2</button>
+          <button data-adj="res" data-delta="2">+2</button>
+          <button data-adj="res" data-delta="10">+10</button>
+        </div>
+        <div class="exact-row">
+          <label for="resInput">Exact resistance (%)</label>
+          <input type="number" id="resInput" min="0" max="100" step="1" value="25">
+        </div>
+        <div class="mode-desc">Fixed resistance percentage; power varies with wheel speed and gear.</div>
+      </div>
+
+      <div id="cmdAckBar" class="ack-bar">Not connected</div>
+      <div class="kbd-hint">
+        <kbd>↑</kbd> / <kbd>↓</kbd> adjust · <kbd>Shift</kbd> for bigger steps · <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> switch mode
+      </div>
+    </section>
+
+    <!-- Session Card -->
+    <section class="card">
+      <div class="card-header">
+        <h2 class="card-title">SESSION</h2>
+      </div>
+      <div class="session-btns">
+        <button id="btnRecToggle">Start recording</button>
+        <button id="btnRecReset">Reset</button>
+        <button id="btnExportCsv">Export CSV</button>
+      </div>
+      <label class="check-row">
+        <input type="checkbox" id="chkAutoPause" checked> Auto-pause when not pedalling
+      </label>
+
+      <div class="setting-rows">
+        <div class="setting-row">
+          <label for="inpFtp">FTP (W) – for % FTP and power zones</label>
+          <input type="number" id="inpFtp" min="50" max="600" step="1" value="250">
+        </div>
+        <div class="field-err" id="errFtp"></div>
+
+        <div class="setting-row">
+          <label for="inpRiderWeight">Rider weight (kg) – for W/kg and Slope mode</label>
+          <input type="number" id="inpRiderWeight" min="30" max="200" step="0.5" value="75">
+        </div>
+        <div class="field-err" id="errRiderWeight"></div>
+
+        <div class="setting-row">
+          <label for="inpMaxHr">Max heart rate (for zones)</label>
+          <input type="number" id="inpMaxHr" min="100" max="230" step="1" value="190">
+        </div>
+        <div class="field-err" id="errMaxHr"></div>
+      </div>
+      <div class="samples-note" id="samplesNote">0 samples recorded</div>
+    </section>
+
+    <!-- Log Card -->
+    <section class="card">
+      <div class="card-header" style="margin-bottom:7px">
+        <h2 class="card-title">LOG</h2>
+        <button id="btnClearLog" class="sm ghost">Clear</button>
+      </div>
+      <div id="logBox" class="log-box"></div>
+    </section>
+
+  </div>
+</main>
+
+<script>
+(() => {
+  'use strict';
+
+  /* =========================================================================
+   * 1. CONSTANTS, UUIDS & UTILITIES
+   * ========================================================================= */
+  const UUID = {
+    FTMS_SVC:     '00001826-0000-1000-8000-00805f9b34fb',
+    FTMS_BIKE:    '00002ad2-0000-1000-8000-00805f9b34fb',
+    FTMS_RES_RNG: '00002ad6-0000-1000-8000-00805f9b34fb',
+    FTMS_PWR_RNG: '00002ad8-0000-1000-8000-00805f9b34fb',
+    FTMS_CP:      '00002ad9-0000-1000-8000-00805f9b34fb',
+    FTMS_STATUS:  '00002ada-0000-1000-8000-00805f9b34fb',
+    FEC_SVC:      '6e40fec1-b5a3-f393-e0a9-e50e24dcca9e',
+    FEC_RX:       '6e40fec2-b5a3-f393-e0a9-e50e24dcca9e',
+    FEC_TX:       '6e40fec3-b5a3-f393-e0a9-e50e24dcca9e',
+    HR_SVC:       '0000180d-0000-1000-8000-00805f9b34fb',
+    HR_MEAS:      '00002a37-0000-1000-8000-00805f9b34fb',
+    BATT_SVC:     '0000180f-0000-1000-8000-00805f9b34fb',
+    BATT_LVL:     '00002a19-0000-1000-8000-00805f9b34fb',
+  };
+
+  const LS = {
+    FTP: 'flux_ftp_w',
+    WEIGHT: 'flux_rider_kg',
+    MAX_HR: 'flux_max_hr',
+    AUTO_CONNECT: 'flux_auto_connect',
+    AUTO_PAUSE: 'flux_auto_pause',
+    BEEPS: 'flux_wk_beeps',
+    SAVED_BRIDGE: 'flux_saved_devices_bridge',
+    SAVED_WEBBLE: 'flux_saved_devices_webble',
+    WORKOUTS: 'flux_workout_library',
+    LAST_WK: 'flux_last_workout',
+  };
+
+  const POWER_ZONES = [
+    { z: 1, name: 'Active Recovery', color: '#94a3b8', max: 55 },
+    { z: 2, name: 'Endurance',       color: '#38bdf8', max: 75 },
+    { z: 3, name: 'Tempo',           color: '#22c55e', max: 90 },
+    { z: 4, name: 'Threshold',       color: '#facc15', max: 105 },
+    { z: 5, name: 'VO2 Max',         color: '#f97316', max: 120 },
+    { z: 6, name: 'Anaerobic',       color: '#ef4444', max: 150 },
+    { z: 7, name: 'Neuromuscular',   color: '#d946ef', max: Infinity },
+  ];
+
+  const HR_ZONES = [
+    { z: 1, name: 'Recovery',  color: '#94a3b8', max: 60 },
+    { z: 2, name: 'Endurance', color: '#38bdf8', max: 70 },
+    { z: 3, name: 'Tempo',     color: '#22c55e', max: 80 },
+    { z: 4, name: 'Threshold', color: '#f59e0b', max: 90 },
+    { z: 5, name: 'Max',       color: '#fb7185', max: Infinity },
+  ];
+
+  function $(id) { return document.getElementById(id); }
+  function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+
+  function normUuid(u) {
+    if (typeof u === 'number') {
+      return `0000${u.toString(16).padStart(4, '0')}-0000-1000-8000-00805f9b34fb`;
+    }
+    let s = String(u).trim().toLowerCase();
+    if (s.startsWith('0x')) s = s.slice(2);
+    if (s.length === 4) return `0000${s}-0000-1000-8000-00805f9b34fb`;
+    if (s.length === 8) return `${s}-0000-1000-8000-00805f9b34fb`;
+    return s;
+  }
+
+  function bytesToHex(buf) {
+    const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf.buffer || buf, buf.byteOffset || 0, buf.byteLength || buf.length);
+    let out = '';
+    for (let i = 0; i < u8.length; i++) out += u8[i].toString(16).padStart(2, '0');
+    return out;
+  }
+
+  function hexToDataView(hex) {
+    const clean = (hex || '').replace(/\s+/g, '');
+    const u8 = new Uint8Array(clean.length / 2);
+    for (let i = 0; i < u8.length; i++) u8[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+    return new DataView(u8.buffer);
+  }
+
+  function fmtHMS(sec) {
+    const s = Math.max(0, Math.round(sec));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const r = s % 60;
+    return `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
+  }
+
+  function fmtTime(sec) {
+    const s = Math.max(0, Math.round(sec));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const r = s % 60;
+    const ss = String(r).padStart(2, '0');
+    return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+  }
+
+  function fmtDurShort(sec) {
+    const s = Math.max(0, Math.round(sec));
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${m}:${String(r).padStart(2, '0')}`;
+  }
+
+  function parseDurInput(str) {
+    if (typeof str === 'number' && Number.isFinite(str)) return Math.round(str);
+    const s = String(str || '').trim();
+    if (!s) return NaN;
+    if (/^\d+(\.\d+)?$/.test(s)) return Math.round(parseFloat(s));
+    const parts = s.split(':').map(p => p.trim());
+    if (parts.length === 2 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
+      return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+    }
+    if (parts.length === 3 && parts.every(p => /^\d+$/.test(p))) {
+      return parseInt(parts[0], 10) * 3600 + parseInt(parts[1], 10) * 60 + parseInt(parts[2], 10);
+    }
+    return NaN;
+  }
+
+  function getPowerZone(pctFtp) {
+    const r = Math.round(pctFtp);
+    for (const z of POWER_ZONES) if (r <= z.max) return z;
+    return POWER_ZONES[POWER_ZONES.length - 1];
+  }
+
+  function getHrZone(pctMax) {
+    for (const z of HR_ZONES) if (pctMax < z.max) return z;
+    return HR_ZONES[HR_ZONES.length - 1];
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function log(msg, level = 'info') {
+    const box = $('logBox');
+    const ts = new Date().toLocaleTimeString();
+    const line = document.createElement('div');
+    line.className = 'log-line';
+    line.innerHTML = `<span class="log-ts">${escHtml(ts)}</span><span class="log-msg ${level}">${escHtml(msg)}</span>`;
+    // Newest entries at top (matches reference UI)
+    box.insertBefore(line, box.firstChild);
+    while (box.children.length > 300) box.removeChild(box.lastChild);
+  }
+
+  function showBanner(msg, type = 'warn') {
+    const el = $('globalBanner');
+    el.className = `banner ${type} show`;
+    $('globalBannerText').textContent = msg;
+  }
+  function hideBanner() { $('globalBanner').classList.remove('show'); }
+
+  /* =========================================================================
+   * 2. WEB BLUETOOTH SHIM FOR flux_bridge.py (BridgeClient / BridgeDevice / BridgeChar)
+   *    Wire protocol matches flux_bridge.py:
+   *      events: {ev: 'adv', device}, {ev: 'progress', address, text},
+   *              {ev: 'notify', address, uuid, data}, {ev: 'disconnected', address}
+   *      connect -> {name, services: [{uuid, chars: [{uuid, props}]}]}
+   *      read/write/subscribe use {address, uuid, (data, response)}
+   * ========================================================================= */
+  class BridgeChar extends EventTarget {
+    constructor(bridge, address, serviceUuid, charUuid, props) {
+      super();
+      this._bridge = bridge;
+      this._address = address;
+      this._serviceUuid = normUuid(serviceUuid);
+      this.uuid = normUuid(charUuid);
+      this.value = null;
+      const pset = new Set((props || []).map(p => p.toLowerCase()));
+      this.properties = {
+        read: pset.has('read'),
+        write: pset.has('write'),
+        writeWithoutResponse: pset.has('write-without-response') || pset.has('writewithoutresponse'),
+        notify: pset.has('notify'),
+        indicate: pset.has('indicate'),
+      };
+    }
+
+    async readValue() {
+      const res = await this._bridge.request('read', {
+        address: this._address,
+        uuid: this.uuid,
+      });
+      this.value = hexToDataView(res.data);
+      return this.value;
+    }
+
+    async writeValue(buf) {
+      return this.writeValueWithResponse(buf);
+    }
+
+    async writeValueWithResponse(buf) {
+      await this._bridge.request('write', {
+        address: this._address,
+        uuid: this.uuid,
+        data: bytesToHex(buf),
+        response: true,
+      });
+    }
+
+    async writeValueWithoutResponse(buf) {
+      await this._bridge.request('write', {
+        address: this._address,
+        uuid: this.uuid,
+        data: bytesToHex(buf),
+        response: false,
+      });
+    }
+
+    async startNotifications() {
+      this._bridge.registerNotify(this._address, this.uuid, (dv) => {
+        this.value = dv;
+        const ev = new Event('characteristicvaluechanged');
+        Object.defineProperty(ev, 'target', { value: this });
+        this.dispatchEvent(ev);
+      });
+      await this._bridge.request('subscribe', {
+        address: this._address,
+        uuid: this.uuid,
+      });
+      return this;
+    }
+
+    async stopNotifications() {
+      this._bridge.unregisterNotify(this._address, this.uuid);
+      return this;
+    }
+  }
+
+  class BridgeService {
+    constructor(bridge, address, svcObj) {
+      this._bridge = bridge;
+      this._address = address;
+      this.uuid = normUuid(svcObj.uuid);
+      this._chars = new Map();
+      const charList = svcObj.chars || svcObj.characteristics || [];
+      for (const c of charList) {
+        const cu = normUuid(c.uuid);
+        this._chars.set(cu, new BridgeChar(bridge, address, this.uuid, cu, c.props || c.properties));
+      }
+    }
+    async getCharacteristic(uuid) {
+      const u = normUuid(uuid);
+      const ch = this._chars.get(u);
+      if (!ch) throw new Error(`Characteristic ${u} not found in service ${this.uuid}`);
+      return ch;
+    }
+  }
+
+  class BridgeGATTServer {
+    constructor(device, bridge) {
+      this.device = device;
+      this._bridge = bridge;
+      this.connected = false;
+      this._services = new Map();
+    }
+
+    async connect() {
+      const res = await this._bridge.request('connect', { address: this.device.id }, 95000);
+      this.device.name = res.name || this.device.name || this.device.id;
+      this._services.clear();
+      for (const s of (res.services || [])) {
+        const su = normUuid(s.uuid);
+        this._services.set(su, new BridgeService(this._bridge, this.device.id, s));
+      }
+      this.connected = true;
+      this._bridge.registerDevice(this.device);
+      return this;
+    }
+
+    disconnect() {
+      if (!this.connected) return;
+      this.connected = false;
+      this._bridge.clearNotifyForAddress(this.device.id);
+      this._bridge.request('disconnect', { address: this.device.id }).catch(() => {});
+    }
+
+    async getPrimaryService(uuid) {
+      const u = normUuid(uuid);
+      const svc = this._services.get(u);
+      if (!svc) throw new Error(`Service ${u} not found on device ${this.device.name}`);
+      return svc;
+    }
+  }
+
+  class BridgeDevice extends EventTarget {
+    constructor(bridge, address, name) {
+      super();
+      this.id = address;
+      this.name = name || address;
+      this.gatt = new BridgeGATTServer(this, bridge);
+    }
+    _onBridgeDisconnected() {
+      if (this.gatt.connected) {
+        this.gatt.connected = false;
+        this.dispatchEvent(new Event('gattserverdisconnected'));
+      }
+    }
+  }
+
+  class BridgeClient {
+    constructor() {
+      this.ws = null;
+      this.connected = false;
+      this._nextId = 1;
+      this._pending = new Map();
+      this._notifyMap = new Map(); // `${addr}|${charUuid}` -> fn
+      this._devices = new Map();   // addr -> BridgeDevice
+      this.onAdv = null;
+      this.onProgress = null;
+      this.onClose = null;
+    }
+
+    _wsUrl() {
+      if (location.protocol === 'http:' || location.protocol === 'https:') {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        return `${proto}//${location.host}/ws`;
+      }
+      return 'ws://127.0.0.1:8765/ws';
+    }
+
+    connect(timeoutMs = 2000) {
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const ws = new WebSocket(this._wsUrl());
+        const timer = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            try { ws.close(); } catch (_) {}
+            reject(new Error('Bridge connection timed out'));
+          }
+        }, timeoutMs);
+
+        ws.onopen = async () => {
+          this.ws = ws;
+          this.connected = true;
+          try {
+            const info = await this.request('hello', {}, timeoutMs);
+            clearTimeout(timer);
+            if (!settled) { settled = true; resolve(info); }
+          } catch (err) {
+            clearTimeout(timer);
+            if (!settled) { settled = true; reject(err); }
+          }
+        };
+
+        ws.onerror = () => {
+          clearTimeout(timer);
+          if (!settled) { settled = true; reject(new Error('WebSocket bridge unavailable')); }
+        };
+
+        ws.onclose = () => {
+          clearTimeout(timer);
+          const wasConnected = this.connected;
+          this.connected = false;
+          this.ws = null;
+          for (const [, p] of this._pending) {
+            clearTimeout(p.timer);
+            p.reject(new Error('Bridge WebSocket closed'));
+          }
+          this._pending.clear();
+          this._notifyMap.clear();
+          for (const dev of this._devices.values()) dev._onBridgeDisconnected();
+          this._devices.clear();
+          if (!settled) { settled = true; reject(new Error('Bridge WebSocket closed')); }
+          if (wasConnected && this.onClose) this.onClose();
+        };
+
+        ws.onmessage = (ev) => {
+          let msg;
+          try { msg = JSON.parse(ev.data); } catch (_) { return; }
+          if (msg.id !== undefined && this._pending.has(msg.id)) {
+            const p = this._pending.get(msg.id);
+            this._pending.delete(msg.id);
+            clearTimeout(p.timer);
+            if (msg.ok) p.resolve(msg);
+            else p.reject(new Error(msg.error || 'Bridge operation failed'));
+            return;
+          }
+          const evType = msg.ev || msg.event;
+          if (evType === 'adv' && this.onAdv) {
+            this.onAdv(msg.device || msg);
+          } else if (evType === 'progress' && this.onProgress) {
+            this.onProgress({ address: msg.address, text: msg.text || msg.message || '' });
+          } else if (evType === 'notify') {
+            const cu = normUuid(msg.uuid || msg.characteristic);
+            const key = `${msg.address}|${cu}`;
+            const fn = this._notifyMap.get(key);
+            if (fn) fn(hexToDataView(msg.data));
+          } else if (evType === 'disconnected') {
+            this.clearNotifyForAddress(msg.address);
+            const dev = this._devices.get(msg.address);
+            if (dev) {
+              this._devices.delete(msg.address);
+              dev._onBridgeDisconnected();
+            }
+          }
+        };
+      });
+    }
+
+    request(op, params = {}, timeoutMs = 15000) {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        return Promise.reject(new Error('Bridge is not connected'));
+      }
+      const id = this._nextId++;
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          this._pending.delete(id);
+          reject(new Error(`Bridge op '${op}' timed out`));
+        }, timeoutMs);
+        this._pending.set(id, { resolve, reject, timer });
+        this.ws.send(JSON.stringify({ id, op, ...params }));
+      });
+    }
+
+    registerDevice(dev) { this._devices.set(dev.id, dev); }
+    registerNotify(addr, charUuid, fn) { this._notifyMap.set(`${addr}|${normUuid(charUuid)}`, fn); }
+    unregisterNotify(addr, charUuid) { this._notifyMap.delete(`${addr}|${normUuid(charUuid)}`); }
+    clearNotifyForAddress(addr) {
+      const prefix = `${addr}|`;
+      for (const k of Array.from(this._notifyMap.keys())) {
+        if (k.startsWith(prefix)) this._notifyMap.delete(k);
+      }
+    }
+    createDevice(address, name) { return new BridgeDevice(this, address, name); }
+  }
+
+  /* =========================================================================
+   * 3. APPLICATION STATE
+   * ========================================================================= */
+  const bridge = new BridgeClient();
+
+  const state = {
+    transport: 'checking', // 'bridge' | 'webble' | 'none' | 'bridge-stopped'
+    bridgePollTimer: null,
+
+    ftp: 250,
+    riderWeight: 75,
+    maxHr: 190,
+    autoConnect: true,
+    autoPause: true,
+    beeps: true,
+
+    // Trainer connection
+    trainerState: 'disconnected', // 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'demo' | 'failed'
+    trainerProtocol: null,
+    trainerDriver: null,
+    trainerDevice: null,
+    trainerMeta: null,
+    trainerIntentionalDisc: false,
+    trainerReconnectTimer: null,
+    trainerReconnectAttempt: 0,
+
+    // HR strap connection
+    hrState: 'disconnected',
+    hrDevice: null,
+    hrChar: null,
+    hrMeta: null,
+    hrBattery: null,
+    hrIntentionalDisc: false,
+    hrReconnectTimer: null,
+    hrReconnectAttempt: 0,
+
+    // Live readings
+    instPower: null,
+    power3sBuf: [],
+    power3s: null,
+    cadence: null,
+    speed: null,
+    resistance: null,
+    lastTrainerDataTs: 0,
+
+    hrStrapBpm: null,
+    lastHrStrapTs: 0,
+    hrTrainerBpm: null,
+    lastHrTrainerTs: 0,
+
+    // Control mode & targets
+    mode: 'erg',
+    ergTarget: 150,
+    simGrade: 0.0,
+    simWind: 0.0,
+    simCrr: 0.004,
+    simCw: 0.51,
+    simBikeWeight: 9.0,
+    resTarget: 25,
+    cmdDebounceTimer: null,
+
+    // Session recording
+    recording: false,
+    autoPaused: false,
+    zeroPedalSec: 0,
+    elapsedSec: 0,
+    distanceKm: 0,
+    workKj: 0,
+    powerSum: 0,
+    powerCount: 0,
+    powerMax: 0,
+    hrSum: 0,
+    hrCount: 0,
+    hrMax: 0,
+    csvRows: [],
+
+    // Chart data
+    chartSamples: [],
+    chartWindowSec: 180,
+
+    // Scanning
+    scanning: false,
+    scanAutoStopTimer: null,
+    scanDevices: new Map(),
+
+    // Wake Lock
+    wakeLock: null,
+
+    // Workout
+    workout: null,
+    flatPlan: [],
+    player: {
+      active: false,
+      paused: false,
+      stepIdx: 0,
+      stepElapsed: 0,
+      totalElapsed: 0,
+      totalDuration: 0,
+    },
+  };
+
+  /* =========================================================================
+   * 4. WAKE LOCK
+   * ========================================================================= */
+  async function acquireWakeLock() {
+    if (!('wakeLock' in navigator) || state.wakeLock) return;
+    try {
+      state.wakeLock = await navigator.wakeLock.request('screen');
+      state.wakeLock.addEventListener('release', () => { state.wakeLock = null; });
+    } catch (_) {}
+  }
+
+  function releaseWakeLock() {
+    if (state.wakeLock) {
+      try { state.wakeLock.release(); } catch (_) {}
+      state.wakeLock = null;
+    }
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && (state.trainerState === 'connected' || state.trainerState === 'demo')) {
+      acquireWakeLock();
+    }
+  });
+
+  /* =========================================================================
+   * 5. FTMS DRIVER
+   * ========================================================================= */
+  class FTMSDriver {
+    constructor(device) {
+      this.name = 'FTMS';
+      this.device = device;
+      this.bikeChar = null;
+      this.cpChar = null;
+      this.statusChar = null;
+      this.resRange = { min: 0, max: 100, inc: 1 };
+      this.pwrRange = { min: 0, max: 1500, inc: 1 };
+      this._queue = [];
+      this._busy = false;
+      this._pendingResp = null;
+      this._onBikeBound = (e) => this._parseBikeData(e.target.value);
+      this._onCpBound = (e) => this._handleCpResponse(e.target.value);
+      this._onStatusBound = (e) => this._handleStatus(e.target.value);
+    }
+
+    async init() {
+      const server = this.device.gatt.connected ? this.device.gatt : await this.device.gatt.connect();
+      const svc = await server.getPrimaryService(UUID.FTMS_SVC);
+
+      try {
+        const resChar = await svc.getCharacteristic(UUID.FTMS_RES_RNG);
+        const dv = await resChar.readValue();
+        if (dv.byteLength >= 6) {
+          this.resRange = {
+            min: dv.getInt16(0, true),
+            max: dv.getInt16(2, true),
+            inc: dv.getUint16(4, true) || 1,
+          };
+          log(`FTMS resistance range: ${this.resRange.min}..${this.resRange.max} (step ${this.resRange.inc})`);
+        }
+      } catch (_) {}
+
+      try {
+        const pwrChar = await svc.getCharacteristic(UUID.FTMS_PWR_RNG);
+        const dv = await pwrChar.readValue();
+        if (dv.byteLength >= 6) {
+          this.pwrRange = {
+            min: dv.getInt16(0, true),
+            max: dv.getInt16(2, true),
+            inc: dv.getUint16(4, true) || 1,
+          };
+          log(`FTMS power range: ${this.pwrRange.min}..${this.pwrRange.max} W (step ${this.pwrRange.inc})`);
+        }
+      } catch (_) {}
+
+      try {
+        this.statusChar = await svc.getCharacteristic(UUID.FTMS_STATUS);
+        this.statusChar.addEventListener('characteristicvaluechanged', this._onStatusBound);
+        await this.statusChar.startNotifications();
+      } catch (_) {}
+
+      this.cpChar = await svc.getCharacteristic(UUID.FTMS_CP);
+      this.cpChar.addEventListener('characteristicvaluechanged', this._onCpBound);
+      await this.cpChar.startNotifications();
+
+      this.bikeChar = await svc.getCharacteristic(UUID.FTMS_BIKE);
+      this.bikeChar.addEventListener('characteristicvaluechanged', this._onBikeBound);
+      await this.bikeChar.startNotifications();
+
+      await this._sendCp([0x00], 'Request Control');
+      await this._sendCp([0x07], 'Start');
+    }
+
+    _parseBikeData(dv) {
+      if (!dv || dv.byteLength < 2) return;
+      const flags = dv.getUint16(0, true);
+      let off = 2;
+      const data = {};
+
+      if ((flags & 0x0001) === 0 && off + 2 <= dv.byteLength) {
+        data.speed = dv.getUint16(off, true) * 0.01;
+        off += 2;
+      }
+      if ((flags & 0x0002) && off + 2 <= dv.byteLength) off += 2;
+      if ((flags & 0x0004) && off + 2 <= dv.byteLength) {
+        data.cadence = dv.getUint16(off, true) * 0.5;
+        off += 2;
+      }
+      if ((flags & 0x0008) && off + 2 <= dv.byteLength) off += 2;
+      if ((flags & 0x0010) && off + 3 <= dv.byteLength) off += 3;
+      if ((flags & 0x0020) && off + 2 <= dv.byteLength) {
+        data.resistance = dv.getInt16(off, true);
+        off += 2;
+      }
+      if ((flags & 0x0040) && off + 2 <= dv.byteLength) {
+        data.power = Math.max(0, dv.getInt16(off, true));
+        off += 2;
+      }
+      if ((flags & 0x0080) && off + 2 <= dv.byteLength) off += 2;
+      if ((flags & 0x0100) && off + 5 <= dv.byteLength) off += 5;
+      if ((flags & 0x0200) && off + 1 <= dv.byteLength) {
+        const hr = dv.getUint8(off);
+        if (hr > 0 && hr < 255) data.hr = hr;
+        off += 1;
+      }
+
+      onTrainerTelemetry(data);
+    }
+
+    _handleStatus(dv) {
+      if (!dv || dv.byteLength < 1) return;
+      const code = dv.getUint8(0);
+      const labels = {
+        0x01: 'Reset',
+        0x02: 'Stopped/Paused by user',
+        0x04: 'Started/Resumed',
+        0x07: 'Target Resistance changed',
+        0x08: 'Target Power changed',
+        0x12: 'Indoor Bike Sim parameters changed',
+        0xFF: 'Control permission lost',
+      };
+      if (labels[code]) log(`FTMS status: ${labels[code]}`);
+    }
+
+    _handleCpResponse(dv) {
+      if (!dv || dv.byteLength < 3 || dv.getUint8(0) !== 0x80) return;
+      const reqOp = dv.getUint8(1);
+      const resCode = dv.getUint8(2);
+      if (this._pendingResp && this._pendingResp.opcode === reqOp) {
+        const p = this._pendingResp;
+        this._pendingResp = null;
+        clearTimeout(p.timer);
+        p.resolve(resCode);
+      }
+    }
+
+    _sendCp(bytes, label, isRetry = false) {
+      return new Promise((resolve, reject) => {
+        this._queue.push({ bytes, label, isRetry, resolve, reject });
+        this._drainQueue();
+      });
+    }
+
+    async _drainQueue() {
+      if (this._busy || this._queue.length === 0) return;
+      this._busy = true;
+      const item = this._queue.shift();
+      const opcode = item.bytes[0];
+      try {
+        const respPromise = new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            if (this._pendingResp && this._pendingResp.opcode === opcode) this._pendingResp = null;
+            reject(new Error(`FTMS ${item.label} timed out (4 s)`));
+          }, 4000);
+          this._pendingResp = { opcode, resolve, reject, timer };
+        });
+
+        await this.cpChar.writeValueWithResponse(new Uint8Array(item.bytes));
+        const code = await respPromise;
+
+        if (code === 0x01) {
+          item.resolve(true);
+        } else if (code === 0x05 && !item.isRetry && opcode !== 0x00) {
+          log(`FTMS ${item.label}: control not permitted — re-requesting control…`, 'warn');
+          this._queue.unshift({ ...item, isRetry: true });
+          this._queue.unshift({ bytes: [0x00], label: 'Request Control', isRetry: true, resolve: () => {}, reject: () => {} });
+        } else {
+          const names = { 0x02: 'Op code not supported', 0x03: 'Invalid parameter', 0x04: 'Operation failed', 0x05: 'Control not permitted' };
+          item.reject(new Error(`FTMS ${item.label}: ${names[code] || `error 0x${code.toString(16)}`}`));
+        }
+      } catch (err) {
+        if (this._pendingResp) { clearTimeout(this._pendingResp.timer); this._pendingResp = null; }
+        item.reject(err);
+      } finally {
+        this._busy = false;
+        if (this._queue.length > 0) this._drainQueue();
+      }
+    }
+
+    async setErg(watts) {
+      const w = clamp(Math.round(watts), this.pwrRange.min, this.pwrRange.max);
+      const buf = new ArrayBuffer(3);
+      const dv = new DataView(buf);
+      dv.setUint8(0, 0x05);
+      dv.setInt16(1, w, true);
+      await this._sendCp(Array.from(new Uint8Array(buf)), `ERG ${w} W`);
+    }
+
+    async setResistance(pct) {
+      const { min, max, inc } = this.resRange;
+      let raw = min + (clamp(pct, 0, 100) / 100) * (max - min);
+      if (inc > 0) raw = Math.round(raw / inc) * inc;
+      raw = clamp(Math.round(raw), min, max);
+      if (min >= 0 && max <= 255) {
+        await this._sendCp([0x04, raw & 0xFF], `Resistance ${pct}%`);
+      } else {
+        const buf = new ArrayBuffer(3);
+        const dv = new DataView(buf);
+        dv.setUint8(0, 0x04);
+        dv.setInt16(1, raw, true);
+        await this._sendCp(Array.from(new Uint8Array(buf)), `Resistance ${pct}%`);
+      }
+    }
+
+    async setSlope({ grade, wind, crr, cw }) {
+      const buf = new ArrayBuffer(7);
+      const dv = new DataView(buf);
+      dv.setUint8(0, 0x11);
+      dv.setInt16(1, clamp(Math.round(wind * 1000), -32768, 32767), true);
+      dv.setInt16(3, clamp(Math.round(grade * 100), -32768, 32767), true);
+      dv.setUint8(5, clamp(Math.round(crr * 10000), 0, 255));
+      dv.setUint8(6, clamp(Math.round(cw * 100), 0, 255));
+      await this._sendCp(Array.from(new Uint8Array(buf)), `Slope ${grade.toFixed(1)}%`);
+    }
+
+    async stop() {
+      try { await this._sendCp([0x08, 0x01], 'Stop'); } catch (_) {}
+    }
+
+    async teardown() {
+      this._queue = [];
+      if (this._pendingResp) { clearTimeout(this._pendingResp.timer); this._pendingResp = null; }
+      for (const [ch, fn] of [[this.bikeChar, this._onBikeBound], [this.cpChar, this._onCpBound], [this.statusChar, this._onStatusBound]]) {
+        if (ch) {
+          ch.removeEventListener('characteristicvaluechanged', fn);
+          try { await ch.stopNotifications(); } catch (_) {}
+        }
+      }
+    }
+  }
+
+  /* =========================================================================
+   * 6. TACX FE-C OVER BLE DRIVER
+   * ========================================================================= */
+  class FECDriver {
+    constructor(device) {
+      this.name = 'FE-C';
+      this.device = device;
+      this.rxChar = null;
+      this.txChar = null;
+      this._onRxBound = (e) => this._parseAntPacket(e.target.value);
+    }
+
+    async init() {
+      const server = this.device.gatt.connected ? this.device.gatt : await this.device.gatt.connect();
+      const svc = await server.getPrimaryService(UUID.FEC_SVC);
+      this.rxChar = await svc.getCharacteristic(UUID.FEC_RX);
+      this.txChar = await svc.getCharacteristic(UUID.FEC_TX);
+      this.rxChar.addEventListener('characteristicvaluechanged', this._onRxBound);
+      await this.rxChar.startNotifications();
+    }
+
+    _wrapAntPage(page8) {
+      const msg = new Uint8Array(13);
+      msg[0] = 0xA4;
+      msg[1] = 0x09;
+      msg[2] = 0x4F;
+      msg[3] = 0x05;
+      for (let i = 0; i < 8; i++) msg[4 + i] = page8[i] & 0xFF;
+      let xor = 0;
+      for (let i = 0; i < 12; i++) xor ^= msg[i];
+      msg[12] = xor;
+      return msg;
+    }
+
+    async _sendPage(page8) {
+      const pkt = this._wrapAntPage(page8);
+      if (this.txChar.properties && this.txChar.properties.writeWithoutResponse && this.txChar.writeValueWithoutResponse) {
+        await this.txChar.writeValueWithoutResponse(pkt);
+      } else {
+        await this.txChar.writeValue(pkt);
+      }
+    }
+
+    _parseAntPacket(dv) {
+      if (!dv || dv.byteLength < 13) return;
+      const u8 = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+      let idx = 0;
+      while (idx <= u8.length - 13) {
+        if (u8[idx] !== 0xA4) { idx++; continue; }
+        const len = u8[idx + 1];
+        const total = len + 4;
+        if (idx + total > u8.length) break;
+        let xor = 0;
+        for (let i = 0; i < total - 1; i++) xor ^= u8[idx + i];
+        if (xor !== u8[idx + total - 1]) { idx++; continue; }
+
+        if (len >= 9) {
+          const p = idx + 4;
+          const page = u8[p];
+          const data = {};
+          if (page === 0x10) {
+            const spdRaw = u8[p + 4] | (u8[p + 5] << 8);
+            if (spdRaw !== 0xFFFF) data.speed = spdRaw * 0.0036;
+            const hr = u8[p + 6];
+            if (hr !== 0xFF && hr > 0) data.hr = hr;
+            onTrainerTelemetry(data);
+          } else if (page === 0x19) {
+            const cad = u8[p + 2];
+            if (cad !== 0xFF) data.cadence = cad;
+            const pwrRaw = u8[p + 5] | ((u8[p + 6] & 0x0F) << 8);
+            if (pwrRaw !== 0xFFF) data.power = pwrRaw;
+            onTrainerTelemetry(data);
+          }
+        }
+        idx += total;
+      }
+    }
+
+    async setErg(watts) {
+      const val = clamp(Math.round(watts * 4), 0, 16000);
+      await this._sendPage([0x31, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, val & 0xFF, (val >> 8) & 0xFF]);
+    }
+
+    async setResistance(pct) {
+      const val = clamp(Math.round(pct * 2), 0, 200);
+      await this._sendPage([0x30, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, val & 0xFF]);
+    }
+
+    async setSlope({ grade, wind, crr, cw, riderWeight, bikeWeight }) {
+      const rw = clamp(Math.round((riderWeight || 75) * 100), 100, 65534);
+      const bw = clamp(Math.round((bikeWeight || 9) * 20), 0, 4094);
+      const b4 = ((bw & 0x0F) << 4) | 0x0F;
+      const b5 = (bw >> 4) & 0xFF;
+      await this._sendPage([0x37, rw & 0xFF, (rw >> 8) & 0xFF, 0xFF, b4, b5, 70, 0x00]);
+
+      const cwByte = clamp(Math.round((cw ?? 0.51) * 100), 0, 186);
+      const windKmh = clamp(Math.round((wind ?? 0) * 3.6) + 127, 0, 254);
+      await this._sendPage([0x32, 0xFF, 0xFF, 0xFF, 0xFF, cwByte, windKmh, 100]);
+
+      const gRaw = clamp(Math.round(((grade ?? 0) + 200) * 100), 0, 40000);
+      const crrByte = clamp(Math.round((crr ?? 0.004) / 0.00005), 0, 254);
+      await this._sendPage([0x33, 0xFF, 0xFF, 0xFF, 0xFF, gRaw & 0xFF, (gRaw >> 8) & 0xFF, crrByte]);
+    }
+
+    async stop() {}
+
+    async teardown() {
+      if (this.rxChar) {
+        this.rxChar.removeEventListener('characteristicvaluechanged', this._onRxBound);
+        try { await this.rxChar.stopNotifications(); } catch (_) {}
+      }
+    }
+  }
+
+  /* =========================================================================
+   * 7. DEMO MODE DRIVER
+   * ========================================================================= */
+  class DemoDriver {
+    constructor() {
+      this.name = 'DEMO';
+      this._timer = null;
+      this._mode = 'erg';
+      this._erg = 150;
+      this._slope = { grade: 0, wind: 0, crr: 0.004, cw: 0.51, riderWeight: 75, bikeWeight: 9 };
+      this._res = 25;
+      this._curPower = 120;
+      this._curSpeed = 28;
+      this._curCadence = 88;
+      this._curHr = 120;
+    }
+
+    async init() { this._timer = setInterval(() => this._tick(), 500); }
+    async setErg(w) { this._mode = 'erg'; this._erg = w; }
+    async setResistance(p) { this._mode = 'res'; this._res = p; }
+    async setSlope(cfg) { this._mode = 'sim'; this._slope = { ...this._slope, ...cfg }; }
+    async stop() {}
+    async teardown() { if (this._timer) { clearInterval(this._timer); this._timer = null; } }
+
+    _solveSpeedKmh(powerW, gradePct, windMs, crr, cw, massKg) {
+      const g = 9.80665;
+      const theta = Math.atan(gradePct / 100);
+      const fGrav = massKg * g * Math.sin(theta);
+      const fRoll = crr * massKg * g * Math.cos(theta);
+      let lo = 0.2, hi = 30.0;
+      for (let i = 0; i < 24; i++) {
+        const mid = (lo + hi) * 0.5;
+        const vAir = mid + windMs;
+        const fAero = 0.5 * cw * vAir * Math.abs(vAir);
+        if (mid * (fGrav + fRoll + fAero) < powerW) lo = mid; else hi = mid;
+      }
+      return ((lo + hi) * 0.5) * 3.6;
+    }
+
+    _tick() {
+      let targetPower = 150;
+      let targetCad = 88 + (Math.random() - 0.5) * 4;
+      const mass = (state.riderWeight || 75) + (this._slope.bikeWeight || 9);
+
+      if (this._mode === 'erg') {
+        targetPower = this._erg;
+        if (this._erg <= 0) targetCad = 0;
+      } else if (this._mode === 'sim') {
+        targetPower = clamp(state.ftp * 0.72 + this._slope.grade * 14, 70, state.ftp * 1.35);
+        targetCad = clamp(90 - this._slope.grade * 2.2, 62, 105);
+      } else {
+        targetPower = clamp(40 + this._res * 4.5, 0, 1000);
+        targetCad = clamp(95 - this._res * 0.25, 65, 102);
+      }
+
+      const noise = targetPower > 0 ? (Math.random() - 0.5) * 8 : 0;
+      this._curPower += (Math.max(0, targetPower + noise) - this._curPower) * 0.35;
+      this._curCadence += (targetCad - this._curCadence) * 0.3;
+
+      const grade = this._mode === 'sim' ? this._slope.grade : 0;
+      const wind = this._mode === 'sim' ? this._slope.wind : 0;
+      const crr = this._mode === 'sim' ? this._slope.crr : 0.004;
+      const cw = this._mode === 'sim' ? this._slope.cw : 0.51;
+      const eqSpeed = this._curPower < 5 ? 0 : this._solveSpeedKmh(this._curPower, grade, wind, crr, cw, mass);
+      this._curSpeed += (eqSpeed - this._curSpeed) * 0.25;
+
+      const intensity = clamp(this._curPower / Math.max(50, state.ftp), 0, 1.4);
+      const targetHr = clamp(62 + (state.maxHr - 62) * clamp(0.18 + intensity * 0.68, 0.05, 0.96), 55, state.maxHr);
+      this._curHr += (targetHr - this._curHr) * 0.03 + (Math.random() - 0.5) * 0.6;
+
+      onTrainerTelemetry({
+        power: Math.round(this._curPower),
+        cadence: Math.round(this._curCadence),
+        speed: Math.max(0, this._curSpeed),
+        resistance: this._mode === 'res' ? this._res : undefined,
+        hr: Math.round(this._curHr),
+      });
+    }
+  }
+
+  /* =========================================================================
+   * 8. SAVED DEVICES STORAGE (SEPARATE PER TRANSPORT, ROLE-BASED DEFAULTS)
+   * ========================================================================= */
+  function savedStorageKey() {
+    return state.transport === 'bridge' || state.transport === 'bridge-stopped'
+      ? LS.SAVED_BRIDGE
+      : LS.SAVED_WEBBLE;
+  }
+
+  function loadSavedDevices() {
+    try {
+      const raw = localStorage.getItem(savedStorageKey());
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch (_) { return []; }
+  }
+
+  function saveSavedDevices(list) {
+    localStorage.setItem(savedStorageKey(), JSON.stringify(list));
+    renderSavedDevices();
+  }
+
+  function upsertSavedDevice({ id, name, role, protocol }) {
+    const list = loadSavedDevices();
+    const now = new Date().toISOString();
+    let existing = list.find(d => d.id === id && d.role === role);
+    if (existing) {
+      if (name) existing.name = name;
+      if (protocol) existing.protocol = protocol;
+      existing.lastUsed = now;
+    } else {
+      const hasDefaultForRole = list.some(d => d.role === role && d.isDefault);
+      list.push({
+        id,
+        name: name || id,
+        role,
+        protocol: protocol || (role === 'hr' ? 'Heart rate' : 'FTMS'),
+        lastUsed: now,
+        isDefault: !hasDefaultForRole,
+      });
+    }
+    saveSavedDevices(list);
+  }
+
+  function toggleDefaultSaved(id, role) {
+    const list = loadSavedDevices();
+    for (const d of list) {
+      if (d.role === role) d.isDefault = (d.id === id) ? !d.isDefault : false;
+    }
+    saveSavedDevices(list);
+  }
+
+  function forgetSavedDevice(id, role) {
+    saveSavedDevices(loadSavedDevices().filter(d => !(d.id === id && d.role === role)));
+  }
+
+  function getDefaultSaved(role) {
+    return loadSavedDevices().find(d => d.role === role && d.isDefault) || null;
+  }
+
+  function renderSavedDevices() {
+    const container = $('savedDevicesList');
+    const list = loadSavedDevices();
+    if (list.length === 0) {
+      container.innerHTML = `<div class="saved-empty">No saved devices yet.</div>`;
+      return;
+    }
+    container.innerHTML = '';
+    for (const d of list) {
+      const row = document.createElement('div');
+      row.className = 'saved-item';
+      const dateStr = d.lastUsed ? new Date(d.lastUsed).toLocaleDateString() : '—';
+      const icon = d.role === 'hr' ? '❤' : '🚲';
+      const protoLbl = d.role === 'hr' ? 'Heart rate' : (d.protocol || 'FTMS');
+      row.innerHTML = `
+        <button class="star-btn ${d.isDefault ? 'on' : ''}" title="Toggle default ${d.role === 'hr' ? 'HR monitor' : 'trainer'}">★</button>
+        <div class="dev-info">
+          <div class="dev-name" title="${escHtml(d.id)}">${icon} ${escHtml(d.name)}</div>
+          <div class="dev-meta-line" title="${escHtml(d.id)}">${escHtml(d.id)} · ${escHtml(protoLbl)} · last ${escHtml(dateStr)}</div>
+        </div>
+        <div class="row" style="flex-wrap:nowrap">
+          <button class="sm btn-conn">Connect</button>
+          <button class="icon-btn btn-forget" title="Forget device">✕</button>
+        </div>
+      `;
+      row.querySelector('.star-btn').onclick = () => toggleDefaultSaved(d.id, d.role);
+      row.querySelector('.btn-forget').onclick = () => forgetSavedDevice(d.id, d.role);
+      row.querySelector('.btn-conn').onclick = () => {
+        if (d.role === 'hr') connectSavedHr(d);
+        else connectSavedTrainer(d);
+      };
+      container.appendChild(row);
+    }
+  }
+
+  /* =========================================================================
+   * 9. TRAINER CONNECTION, RECONNECT & PROTOCOL NEGOTIATION
+   * ========================================================================= */
+  function setTrainerStatus(st, label) {
+    state.trainerState = st;
+    const pill = $('trainerStatusPill');
+    pill.className = 'status-pill';
+    if (st === 'connected') pill.classList.add('connected');
+    else if (st === 'connecting' || st === 'reconnecting') pill.classList.add('connecting');
+    else if (st === 'failed') pill.classList.add('failed');
+    else if (st === 'demo') pill.classList.add('demo');
+    $('trainerStatusText').textContent = label;
+    $('btnDisconnect').disabled = (st === 'disconnected' || st === 'failed');
+    $('btnDemo').disabled = (st === 'connected' || st === 'connecting' || st === 'reconnecting');
+    updatePlayerButtons();
+  }
+
+  async function requestWebBleTrainer() {
+    if (!navigator.bluetooth) throw new Error('Web Bluetooth is not available in this browser.');
+    return navigator.bluetooth.requestDevice({
+      filters: [
+        { namePrefix: 'Tacx' },
+        { services: [0x1826] },
+        { services: [UUID.FEC_SVC] },
+      ],
+      optionalServices: [0x1826, UUID.FEC_SVC, 0x180D, 0x180F, 0x180A],
+    });
+  }
+
+  async function connectTrainerDevice(device, meta = null) {
+    clearTimeout(state.trainerReconnectTimer);
+    state.trainerReconnectTimer = null;
+    state.trainerIntentionalDisc = false;
+
+    if (state.trainerDriver) {
+      try { await state.trainerDriver.teardown(); } catch (_) {}
+      state.trainerDriver = null;
+    }
+
+    const name = device.name || (meta && meta.name) || device.id || 'Trainer';
+    setTrainerStatus('connecting', `Connecting ${name}…`);
+    log(`${name}: connecting…`);
+
+    const onDisc = () => handleTrainerDisconnected();
+    if (state.trainerDevice && state.trainerDevice._fluxDiscHandler) {
+      state.trainerDevice.removeEventListener('gattserverdisconnected', state.trainerDevice._fluxDiscHandler);
+    }
+    device._fluxDiscHandler = onDisc;
+    device.addEventListener('gattserverdisconnected', onDisc);
+    state.trainerDevice = device;
+    state.trainerMeta = { id: device.id, name };
+
+    try {
+      if (!device.gatt.connected) {
+        await device.gatt.connect();
+      }
+      const pref = $('protocolSelect').value;
+      let driver = null;
+      if (pref === 'ftms') {
+        driver = new FTMSDriver(device);
+        await driver.init();
+      } else if (pref === 'fec') {
+        driver = new FECDriver(device);
+        await driver.init();
+      } else {
+        try {
+          driver = new FTMSDriver(device);
+          await driver.init();
+        } catch (ftmsErr) {
+          log(`FTMS unavailable (${ftmsErr.message}); falling back to FE-C…`, 'warn');
+          try { await driver.teardown(); } catch (_) {}
+          driver = new FECDriver(device);
+          await driver.init();
+        }
+      }
+
+      state.trainerDriver = driver;
+      state.trainerProtocol = driver.name;
+      state.trainerReconnectAttempt = 0;
+      const finalName = device.name || name;
+      state.trainerMeta = { id: device.id, name: finalName };
+
+      setTrainerStatus('connected', `${finalName} · ${driver.name}`);
+      log(`Connected to ${finalName} (${driver.name})`, 'ok');
+      upsertSavedDevice({ id: device.id, name: finalName, role: 'trainer', protocol: driver.name });
+
+      await acquireWakeLock();
+      if (!state.recording) startRecording();
+      sendCurrentControl(true);
+    } catch (err) {
+      log(`Connect failed: ${err.message || err}`, 'err');
+      try { if (device.gatt && device.gatt.connected) device.gatt.disconnect(); } catch (_) {}
+      setTrainerStatus('failed', 'Connection failed');
+      throw err;
+    }
+  }
+
+  function handleTrainerDisconnected() {
+    if (state.trainerIntentionalDisc || state.trainerState === 'disconnected' || state.trainerState === 'failed' || state.trainerState === 'demo') {
+      return;
+    }
+    log('Trainer disconnected unexpectedly.', 'warn');
+    if (state.trainerDriver) {
+      state.trainerDriver.teardown().catch(() => {});
+      state.trainerDriver = null;
+    }
+    scheduleTrainerReconnect();
+  }
+
+  function scheduleTrainerReconnect() {
+    if (state.trainerIntentionalDisc || !state.trainerDevice) return;
+    if (state.trainerReconnectAttempt >= 6) {
+      log('Trainer auto-reconnect stopped after 6 attempts.', 'err');
+      setTrainerStatus('failed', 'Connection failed');
+      releaseWakeLock();
+      return;
+    }
+    state.trainerReconnectAttempt++;
+    const delays = [1500, 3000, 5000, 8000, 12000, 15000];
+    const waitMs = delays[state.trainerReconnectAttempt - 1] || 15000;
+    setTrainerStatus('reconnecting', `Reconnecting (${state.trainerReconnectAttempt}/6)…`);
+    log(`Trainer reconnect attempt ${state.trainerReconnectAttempt}/6 in ${(waitMs / 1000).toFixed(1)} s…`, 'warn');
+
+    state.trainerReconnectTimer = setTimeout(async () => {
+      if (state.trainerIntentionalDisc) return;
+      try {
+        const dev = state.transport === 'bridge'
+          ? bridge.createDevice(state.trainerMeta.id, state.trainerMeta.name)
+          : state.trainerDevice;
+        await connectTrainerDevice(dev, state.trainerMeta);
+      } catch (_) {
+        scheduleTrainerReconnect();
+      }
+    }, waitMs);
+  }
+
+  async function disconnectTrainer(sendFtmsStop = true) {
+    state.trainerIntentionalDisc = true;
+    clearTimeout(state.trainerReconnectTimer);
+    state.trainerReconnectTimer = null;
+    state.trainerReconnectAttempt = 0;
+
+    if (state.trainerDriver) {
+      if (sendFtmsStop && state.trainerDriver.stop) {
+        try { await state.trainerDriver.stop(); } catch (_) {}
+      }
+      try { await state.trainerDriver.teardown(); } catch (_) {}
+      state.trainerDriver = null;
+    }
+    if (state.trainerDevice) {
+      if (state.trainerDevice._fluxDiscHandler) {
+        state.trainerDevice.removeEventListener('gattserverdisconnected', state.trainerDevice._fluxDiscHandler);
+      }
+      try { if (state.trainerDevice.gatt && state.trainerDevice.gatt.connected) state.trainerDevice.gatt.disconnect(); } catch (_) {}
+      state.trainerDevice = null;
+    }
+    state.trainerProtocol = null;
+    setTrainerStatus('disconnected', 'Disconnected');
+    setAckBar('Not connected');
+    releaseWakeLock();
+    log('Trainer disconnected.');
+  }
+
+  async function startDemoMode() {
+    await disconnectTrainer(true);
+    state.trainerIntentionalDisc = false;
+    const drv = new DemoDriver();
+    await drv.init();
+    state.trainerDriver = drv;
+    state.trainerProtocol = 'DEMO';
+    setTrainerStatus('demo', 'Demo mode');
+    log('Demo mode started.', 'ok');
+    await acquireWakeLock();
+    if (!state.recording) startRecording();
+    sendCurrentControl(true);
+  }
+
+  async function connectSavedTrainer(saved) {
+    if (state.transport === 'bridge') {
+      const dev = bridge.createDevice(saved.id, saved.name);
+      await connectTrainerDevice(dev, saved).catch(() => {});
+    } else if (state.transport === 'webble') {
+      let matched = null;
+      if (navigator.bluetooth && navigator.bluetooth.getDevices) {
+        try {
+          const devs = await navigator.bluetooth.getDevices();
+          matched = devs.find(d => d.id === saved.id || d.name === saved.name) || null;
+        } catch (_) {}
+      }
+      try {
+        const dev = matched || await requestWebBleTrainer();
+        await connectTrainerDevice(dev);
+      } catch (err) {
+        if (!String(err).includes('cancelled') && !String(err).includes('canceled')) {
+          log(`Web Bluetooth connect failed: ${err.message || err}`, 'err');
+        }
+      }
+    } else {
+      showBanner('No Bluetooth transport available. Run flux_bridge.py or use Chrome/Edge with Web Bluetooth (or try Demo mode).', 'warn');
+    }
+  }
+
+  /* =========================================================================
+   * 10. HEART RATE STRAP / WATCH DRIVER (0x180D / 0x2A37 + Battery 0x180F / 0x2A19)
+   * ========================================================================= */
+  function updateHrUiHeader() {
+    const pill = $('hrHeaderPill');
+    const titleEl = $('hrRowTitle');
+    const statusEl = $('hrRowStatus');
+    const btnDisc = $('btnDisconnectHr');
+
+    if (state.hrState === 'connected' && state.hrMeta) {
+      const batt = state.hrBattery !== null ? ` · ${state.hrBattery}%` : '';
+      $('hrHeaderText').textContent = `❤ ${state.hrMeta.name}${batt}`;
+      pill.style.display = 'inline-flex';
+      titleEl.textContent = state.hrMeta.name;
+      statusEl.textContent = `Connected${batt}`;
+      btnDisc.disabled = false;
+    } else if (state.hrState === 'connecting' || state.hrState === 'reconnecting') {
+      pill.style.display = 'none';
+      titleEl.textContent = state.hrMeta ? state.hrMeta.name : 'Heart-rate monitor';
+      statusEl.textContent = state.hrState === 'reconnecting'
+        ? `Reconnecting (${state.hrReconnectAttempt}/6)…`
+        : 'Connecting…';
+      btnDisc.disabled = false;
+    } else {
+      pill.style.display = 'none';
+      titleEl.textContent = 'No heart-rate monitor';
+      statusEl.textContent = 'Search, then Connect HR on your strap…';
+      btnDisc.disabled = true;
+    }
+  }
+
+  function parseHrMeasurement(dv) {
+    if (!dv || dv.byteLength < 2) return;
+    const flags = dv.getUint8(0);
+    const is16Bit = (flags & 0x01) !== 0;
+    const contactBits = (flags & 0x06);
+    if (contactBits === 0x04) {
+      state.hrStrapBpm = null;
+      return;
+    }
+    const bpm = is16Bit && dv.byteLength >= 3 ? dv.getUint16(1, true) : dv.getUint8(1);
+    if (bpm > 0 && bpm < 255) {
+      state.hrStrapBpm = bpm;
+      state.lastHrStrapTs = Date.now();
+    }
+  }
+
+  async function connectHrDevice(device, meta = null) {
+    clearTimeout(state.hrReconnectTimer);
+    state.hrReconnectTimer = null;
+    state.hrIntentionalDisc = false;
+
+    const name = device.name || (meta && meta.name) || device.id || 'HR Monitor';
+    state.hrState = 'connecting';
+    state.hrMeta = { id: device.id, name };
+    state.hrBattery = null;
+    updateHrUiHeader();
+    log(`${name}: connecting HR monitor…`);
+
+    const onDisc = () => handleHrDisconnected();
+    if (state.hrDevice && state.hrDevice._fluxHrDisc) {
+      state.hrDevice.removeEventListener('gattserverdisconnected', state.hrDevice._fluxHrDisc);
+    }
+    device._fluxHrDisc = onDisc;
+    device.addEventListener('gattserverdisconnected', onDisc);
+    state.hrDevice = device;
+
+    try {
+      const server = device.gatt.connected ? device.gatt : await device.gatt.connect();
+      const hrSvc = await server.getPrimaryService(UUID.HR_SVC);
+      const hrChar = await hrSvc.getCharacteristic(UUID.HR_MEAS);
+      const onMeas = (e) => parseHrMeasurement(e.target.value);
+      hrChar._fluxHrMeas = onMeas;
+      hrChar.addEventListener('characteristicvaluechanged', onMeas);
+      await hrChar.startNotifications();
+      state.hrChar = hrChar;
+
+      try {
+        const battSvc = await server.getPrimaryService(UUID.BATT_SVC);
+        const battChar = await battSvc.getCharacteristic(UUID.BATT_LVL);
+        const dv = await battChar.readValue();
+        if (dv && dv.byteLength >= 1) state.hrBattery = dv.getUint8(0);
+      } catch (_) {}
+
+      const finalName = device.name || name;
+      state.hrMeta = { id: device.id, name: finalName };
+      state.hrState = 'connected';
+      state.hrReconnectAttempt = 0;
+      updateHrUiHeader();
+      log(`HR monitor connected: ${finalName}${state.hrBattery !== null ? ` (${state.hrBattery}%)` : ''}`, 'ok');
+      upsertSavedDevice({ id: device.id, name: finalName, role: 'hr', protocol: 'Heart rate' });
+    } catch (err) {
+      log(`HR connect failed: ${err.message || err}`, 'err');
+      try { if (device.gatt && device.gatt.connected) device.gatt.disconnect(); } catch (_) {}
+      state.hrState = 'disconnected';
+      state.hrChar = null;
+      state.hrBattery = null;
+      updateHrUiHeader();
+      throw err;
+    }
+  }
+
+  function handleHrDisconnected() {
+    if (state.hrIntentionalDisc || state.hrState === 'disconnected') return;
+    log('HR monitor disconnected unexpectedly.', 'warn');
+    state.hrStrapBpm = null;
+    state.hrChar = null;
+    scheduleHrReconnect();
+  }
+
+  function scheduleHrReconnect() {
+    if (state.hrIntentionalDisc || !state.hrDevice) return;
+    if (state.hrReconnectAttempt >= 6) {
+      log('HR monitor auto-reconnect stopped after 6 attempts.', 'err');
+      state.hrState = 'disconnected';
+      updateHrUiHeader();
+      return;
+    }
+    state.hrReconnectAttempt++;
+    const delays = [1500, 3000, 5000, 8000, 12000, 15000];
+    const waitMs = delays[state.hrReconnectAttempt - 1] || 15000;
+    state.hrState = 'reconnecting';
+    updateHrUiHeader();
+    log(`HR reconnect attempt ${state.hrReconnectAttempt}/6 in ${(waitMs / 1000).toFixed(1)} s…`, 'warn');
+
+    state.hrReconnectTimer = setTimeout(async () => {
+      if (state.hrIntentionalDisc) return;
+      try {
+        const dev = state.transport === 'bridge'
+          ? bridge.createDevice(state.hrMeta.id, state.hrMeta.name)
+          : state.hrDevice;
+        await connectHrDevice(dev, state.hrMeta);
+      } catch (_) {
+        scheduleHrReconnect();
+      }
+    }, waitMs);
+  }
+
+  async function disconnectHr() {
+    state.hrIntentionalDisc = true;
+    clearTimeout(state.hrReconnectTimer);
+    state.hrReconnectTimer = null;
+    state.hrReconnectAttempt = 0;
+
+    if (state.hrChar) {
+      if (state.hrChar._fluxHrMeas) {
+        state.hrChar.removeEventListener('characteristicvaluechanged', state.hrChar._fluxHrMeas);
+      }
+      try { await state.hrChar.stopNotifications(); } catch (_) {}
+      state.hrChar = null;
+    }
+    if (state.hrDevice) {
+      if (state.hrDevice._fluxHrDisc) {
+        state.hrDevice.removeEventListener('gattserverdisconnected', state.hrDevice._fluxHrDisc);
+      }
+      try { if (state.hrDevice.gatt && state.hrDevice.gatt.connected) state.hrDevice.gatt.disconnect(); } catch (_) {}
+      state.hrDevice = null;
+    }
+    state.hrStrapBpm = null;
+    state.hrBattery = null;
+    state.hrState = 'disconnected';
+    updateHrUiHeader();
+    log('HR monitor disconnected.');
+  }
+
+  async function requestWebBleHr() {
+    if (!navigator.bluetooth) throw new Error('Web Bluetooth is not available.');
+    return navigator.bluetooth.requestDevice({
+      filters: [{ services: [0x180D] }],
+      optionalServices: [0x180F],
+    });
+  }
+
+  async function connectSavedHr(saved) {
+    if (state.transport === 'bridge') {
+      const dev = bridge.createDevice(saved.id, saved.name);
+      await connectHrDevice(dev, saved).catch(() => {});
+    } else if (state.transport === 'webble') {
+      let matched = null;
+      if (navigator.bluetooth && navigator.bluetooth.getDevices) {
+        try {
+          const devs = await navigator.bluetooth.getDevices();
+          matched = devs.find(d => d.id === saved.id || d.name === saved.name) || null;
+        } catch (_) {}
+      }
+      try {
+        const dev = matched || await requestWebBleHr();
+        await connectHrDevice(dev);
+      } catch (err) {
+        if (!String(err).includes('cancelled') && !String(err).includes('canceled')) {
+          log(`HR Web Bluetooth failed: ${err.message || err}`, 'err');
+        }
+      }
+    }
+  }
+
+  /* =========================================================================
+   * 11. BRIDGE SCANNING, TRANSPORT INIT & STOP BRIDGE / POLLING
+   * ========================================================================= */
+  function updateTransportUI() {
+    const pill = $('transportPill');
+    const stopBtn = $('btnStopBridge');
+    pill.className = 'transport-pill';
+    if (state.transport === 'bridge') {
+      pill.classList.add('bridge');
+      pill.textContent = 'Bridge · in-app search';
+      stopBtn.style.display = 'inline-flex';
+    } else if (state.transport === 'webble') {
+      pill.classList.add('webble');
+      pill.textContent = 'Web Bluetooth';
+      stopBtn.style.display = 'none';
+    } else if (state.transport === 'bridge-stopped') {
+      pill.classList.add('stopped');
+      pill.textContent = 'Bridge stopped · waiting for restart…';
+      stopBtn.style.display = 'none';
+    } else {
+      pill.textContent = 'No Bluetooth';
+      stopBtn.style.display = 'none';
+    }
+    renderSavedDevices();
+  }
+
+  async function startBridgeScan() {
+    if (state.transport !== 'bridge') return;
+    state.scanDevices.clear();
+    $('scanBox').classList.add('show');
+    $('scanStatusText').textContent = 'Scanning… (auto-stops in 30 s)';
+    renderScanList();
+
+    try {
+      await bridge.request('scanStart');
+      state.scanning = true;
+      clearTimeout(state.scanAutoStopTimer);
+      state.scanAutoStopTimer = setTimeout(() => stopBridgeScan(), 30000);
+      log('Bluetooth scan started.');
+    } catch (err) {
+      log(`Scan failed: ${err.message}`, 'err');
+      $('scanStatusText').textContent = 'Scan error';
+    }
+  }
+
+  async function stopBridgeScan(hide = false) {
+    clearTimeout(state.scanAutoStopTimer);
+    state.scanAutoStopTimer = null;
+    if (state.scanning && bridge.connected) {
+      try { await bridge.request('scanStop'); } catch (_) {}
+    }
+    state.scanning = false;
+    $('scanStatusText').textContent = 'Scan stopped';
+    if (hide) $('scanBox').classList.remove('show');
+  }
+
+  function rssiBarsHtml(rssi) {
+    const lvl = rssi >= -60 ? 4 : rssi >= -72 ? 3 : rssi >= -84 ? 2 : 1;
+    const cls = lvl >= 3 ? '' : lvl === 2 ? 'weak' : 'poor';
+    const heights = [4, 6, 9, 11];
+    return `<span class="rssi-bars ${cls}" title="${rssi} dBm">${heights.map((h, i) => `<span style="height:${h}px" class="${i < lvl ? 'on' : ''}"></span>`).join('')}</span>`;
+  }
+
+  function renderScanList() {
+    const listEl = $('scanList');
+    const filterRelevant = $('chkTrainersOnly').checked;
+    let items = Array.from(state.scanDevices.values());
+    if (filterRelevant) {
+      items = items.filter(d => d.ftms || d.fec || d.hr || /tacx|flux|neo|kickr|wahoo|elite|saris|polar|garmin|tickr|hrm/i.test(d.name || ''));
+    }
+    items.sort((a, b) => (b.rssi ?? -120) - (a.rssi ?? -120));
+
+    if (items.length === 0) {
+      listEl.innerHTML = `<div class="saved-empty" style="border:none">${state.scanning ? 'Listening for nearby trainers & HR monitors…' : 'No matching devices found.'}</div>`;
+      return;
+    }
+
+    listEl.innerHTML = '';
+    for (const d of items) {
+      const row = document.createElement('div');
+      row.className = 'scan-item';
+      const badges = [
+        d.ftms ? `<span class="badge ftms">FTMS</span>` : '',
+        d.fec ? `<span class="badge fec">FE-C</span>` : '',
+        d.hr ? `<span class="badge hr">HR</span>` : '',
+      ].filter(Boolean).join(' ');
+
+      const isHrOnly = d.hr && !d.ftms && !d.fec;
+      row.innerHTML = `
+        <div class="dev-info">
+          <div class="dev-name" title="${escHtml(d.address)}">${escHtml(d.name || d.address)}</div>
+          <div class="dev-meta">
+            ${rssiBarsHtml(d.rssi ?? -100)}
+            <span>${d.rssi ?? '?'} dBm</span>
+            ${badges}
+          </div>
+        </div>
+        <div class="row" style="flex-wrap:nowrap">
+          ${d.hr ? `<button class="sm btn-conn-hr">❤ Connect HR</button>` : ''}
+          ${!isHrOnly ? `<button class="sm btn-add">+ Add</button><button class="sm primary btn-conn-tr">Connect</button>` : ''}
+        </div>
+      `;
+
+      const addBtn = row.querySelector('.btn-add');
+      if (addBtn) {
+        addBtn.onclick = () => {
+          upsertSavedDevice({
+            id: d.address,
+            name: d.name || d.address,
+            role: 'trainer',
+            protocol: d.ftms ? 'FTMS' : (d.fec ? 'FE-C' : 'AUTO'),
+          });
+          log(`Added ${d.name || d.address} to saved devices.`, 'ok');
+        };
+      }
+      const connTr = row.querySelector('.btn-conn-tr');
+      if (connTr) {
+        connTr.onclick = async () => {
+          await stopBridgeScan(true);
+          const dev = bridge.createDevice(d.address, d.name || d.address);
+          connectTrainerDevice(dev, { id: d.address, name: d.name || d.address }).catch(() => {});
+        };
+      }
+      const connHr = row.querySelector('.btn-conn-hr');
+      if (connHr) {
+        connHr.onclick = async () => {
+          await stopBridgeScan(true);
+          const dev = bridge.createDevice(d.address, d.name || d.address);
+          connectHrDevice(dev, { id: d.address, name: d.name || d.address }).catch(() => {});
+        };
+      }
+      listEl.appendChild(row);
+    }
+  }
+
+  bridge.onAdv = (adv) => {
+    state.scanDevices.set(adv.address, adv);
+    renderScanList();
+  };
+
+  bridge.onProgress = (ev) => {
+    const devLabel = (state.trainerMeta && state.trainerMeta.id === ev.address)
+      ? state.trainerMeta.name
+      : ((state.hrMeta && state.hrMeta.id === ev.address) ? state.hrMeta.name : (ev.address || 'BLE'));
+    log(`${devLabel}: ${ev.text}`);
+  };
+
+  bridge.onClose = () => {
+    if (state.transport === 'bridge') {
+      log('Lost connection to Bluetooth bridge.', 'warn');
+      enterBridgeStoppedMode();
+    }
+  };
+
+  function enterBridgeStoppedMode() {
+    state.transport = 'bridge-stopped';
+    state.scanning = false;
+    $('scanBox').classList.remove('show');
+    updateTransportUI();
+    clearInterval(state.bridgePollTimer);
+    state.bridgePollTimer = setInterval(async () => {
+      try {
+        await bridge.connect(1800);
+        clearInterval(state.bridgePollTimer);
+        state.bridgePollTimer = null;
+        state.transport = 'bridge';
+        updateTransportUI();
+        hideBanner();
+        log('Bluetooth bridge reconnected.', 'ok');
+        await autoConnectDefaults();
+      } catch (_) {}
+    }, 3000);
+  }
+
+  async function stopBridgeFlow() {
+    if (!confirm('Disconnect all Bluetooth devices and stop the bridge (freeing the port)?')) return;
+    log('Stopping bridge…', 'warn');
+
+    if (state.player.active && !state.player.paused) pauseWorkout();
+    await stopBridgeScan(true);
+    if (state.hrState !== 'disconnected') await disconnectHr();
+    if (state.trainerState !== 'disconnected' && state.trainerState !== 'failed' && state.trainerState !== 'demo') {
+      await disconnectTrainer(true);
+    }
+    try { await bridge.request('shutdown', {}, 4000); } catch (_) {}
+
+    log('Bridge stopped. Waiting for restart…', 'warn');
+    enterBridgeStoppedMode();
+  }
+
+  async function autoConnectDefaults() {
+    if (!state.autoConnect) return;
+    const defTrainer = getDefaultSaved('trainer');
+    if (defTrainer && (state.trainerState === 'disconnected' || state.trainerState === 'failed')) {
+      log(`Auto-connecting default trainer: ${defTrainer.name}…`);
+      await connectSavedTrainer(defTrainer);
+    }
+    const defHr = getDefaultSaved('hr');
+    if (defHr && state.hrState === 'disconnected') {
+      log(`Auto-connecting default HR monitor: ${defHr.name}…`);
+      await connectSavedHr(defHr);
+    }
+  }
+
+  async function initTransport() {
+    try {
+      await bridge.connect(1800);
+      state.transport = 'bridge';
+      updateTransportUI();
+      log('Connected to Flux S Bluetooth bridge.', 'ok');
+      await autoConnectDefaults();
+      return;
+    } catch (_) {}
+
+    if (navigator.bluetooth) {
+      state.transport = 'webble';
+      updateTransportUI();
+      log('Bridge not running — using browser Web Bluetooth.');
+    } else {
+      state.transport = 'none';
+      updateTransportUI();
+      showBanner(
+        'Web Bluetooth is not available and flux_bridge.py is not running. Launch via Start Flux S GUI.bat, open in Chrome/Edge on localhost/HTTPS, or click Demo mode.',
+        'warn'
+      );
+      log('Neither bridge nor Web Bluetooth is available. Demo mode ready.', 'warn');
+    }
+  }
+
+  /* =========================================================================
+   * 12. TELEMETRY, 1 HZ TICK, SESSION RECORDING & CSV EXPORT
+   * ========================================================================= */
+  function getEffectiveHr() {
+    const now = Date.now();
+    if (state.hrStrapBpm !== null && now - state.lastHrStrapTs <= 4000) {
+      return { bpm: state.hrStrapBpm, source: 'strap' };
+    }
+    if (state.hrTrainerBpm !== null && now - state.lastHrTrainerTs <= 4000) {
+      return { bpm: state.hrTrainerBpm, source: 'trainer' };
+    }
+    return { bpm: null, source: null };
+  }
+
+  function onTrainerTelemetry(data) {
+    const now = Date.now();
+    state.lastTrainerDataTs = now;
+    if (data.power !== undefined) {
+      state.instPower = data.power;
+      state.power3sBuf.push({ t: now, w: data.power });
+      const cutoff = now - 3000;
+      while (state.power3sBuf.length > 0 && state.power3sBuf[0].t < cutoff) state.power3sBuf.shift();
+      const sum = state.power3sBuf.reduce((a, b) => a + b.w, 0);
+      state.power3s = sum / state.power3sBuf.length;
+    }
+    if (data.cadence !== undefined) state.cadence = data.cadence;
+    if (data.speed !== undefined) state.speed = data.speed;
+    if (data.resistance !== undefined) state.resistance = data.resistance;
+    if (data.hr !== undefined) {
+      state.hrTrainerBpm = data.hr;
+      state.lastHrTrainerTs = now;
+    }
+    renderTiles();
+  }
+
+  function startRecording() {
+    state.recording = true;
+    state.autoPaused = false;
+    $('btnRecToggle').textContent = 'Pause recording';
+  }
+
+  function pauseRecording() {
+    state.recording = false;
+    $('btnRecToggle').textContent = 'Resume recording';
+  }
+
+  function resetSession() {
+    state.recording = false;
+    state.autoPaused = false;
+    state.zeroPedalSec = 0;
+    state.elapsedSec = 0;
+    state.distanceKm = 0;
+    state.workKj = 0;
+    state.powerSum = 0;
+    state.powerCount = 0;
+    state.powerMax = 0;
+    state.hrSum = 0;
+    state.hrCount = 0;
+    state.hrMax = 0;
+    state.csvRows = [];
+    state.chartSamples = [];
+    $('btnRecToggle').textContent = 'Start recording';
+    $('samplesNote').textContent = '0 samples recorded';
+    renderTiles();
+    drawTelemetryChart();
+    log('Session reset.');
+  }
+
+  function getActiveWorkoutStepLabel() {
+    if (!state.player.active || !state.flatPlan[state.player.stepIdx]) return '';
+    const s = state.flatPlan[state.player.stepIdx];
+    return `${s.blockName} (${s.rep}/${s.repTotal}) ${s.mode.toUpperCase()} ${s.target}${s.mode === 'erg' ? 'W' : '%'}`;
+  }
+
+  function tick1Hz() {
+    const now = Date.now();
+    const trainerFresh = (now - state.lastTrainerDataTs) <= 3000;
+    const hrObj = getEffectiveHr();
+
+    if (state.recording) {
+      const notPedalling = !trainerFresh || ((state.cadence || 0) < 1 && (state.instPower || 0) < 1);
+      if (state.autoPause && notPedalling) {
+        state.zeroPedalSec++;
+        if (state.zeroPedalSec >= 2) state.autoPaused = true;
+      } else {
+        state.zeroPedalSec = 0;
+        state.autoPaused = false;
+      }
+
+      if (!state.autoPaused) {
+        state.elapsedSec++;
+        const p = trainerFresh && state.instPower !== null ? state.instPower : 0;
+        const spd = trainerFresh && state.speed !== null ? state.speed : 0;
+        state.distanceKm += spd / 3600;
+        state.workKj += p / 1000;
+        if (trainerFresh && state.instPower !== null) {
+          state.powerSum += p;
+          state.powerCount++;
+          if (p > state.powerMax) state.powerMax = p;
+        }
+        if (hrObj.bpm !== null) {
+          state.hrSum += hrObj.bpm;
+          state.hrCount++;
+          if (hrObj.bpm > state.hrMax) state.hrMax = hrObj.bpm;
+        }
+
+        const targetVal = state.mode === 'erg' ? state.ergTarget : (state.mode === 'sim' ? state.simGrade : state.resTarget);
+        state.csvRows.push([
+          new Date(now).toISOString(),
+          state.elapsedSec,
+          trainerFresh && state.instPower !== null ? Math.round(state.instPower) : '',
+          trainerFresh && state.power3s !== null ? Math.round(state.power3s) : '',
+          state.mode,
+          targetVal,
+          trainerFresh && state.cadence !== null ? Math.round(state.cadence) : '',
+          trainerFresh && state.speed !== null ? state.speed.toFixed(2) : '',
+          hrObj.bpm !== null ? Math.round(hrObj.bpm) : '',
+          state.distanceKm.toFixed(4),
+          state.workKj.toFixed(2),
+          getActiveWorkoutStepLabel(),
+        ]);
+        $('samplesNote').textContent = `${state.csvRows.length} samples recorded`;
+      }
+    }
+
+    if (state.player.active && !state.player.paused && !state.autoPaused) {
+      tickWorkout1Hz();
+    }
+
+    if (trainerFresh || hrObj.bpm !== null || state.recording) {
+      state.chartSamples.push({
+        t: now,
+        power: trainerFresh ? state.instPower : null,
+        ergTarget: state.mode === 'erg' ? state.ergTarget : null,
+        cadence: trainerFresh ? state.cadence : null,
+        speed: trainerFresh ? state.speed : null,
+        hr: hrObj.bpm,
+      });
+      if (state.chartSamples.length > 1850) {
+        state.chartSamples.splice(0, state.chartSamples.length - 1850);
+      }
+    }
+
+    renderTiles();
+    drawTelemetryChart();
+  }
+
+  function exportCsv() {
+    if (state.csvRows.length === 0) {
+      log('No recorded session samples to export yet.', 'warn');
+      return;
+    }
+    const header = [
+      'timestamp', 'elapsed_s', 'power_w', 'power_3s_w', 'target_mode', 'target_value',
+      'cadence_rpm', 'speed_kmh', 'heart_rate_bpm', 'distance_km', 'work_kj', 'workout_step',
+    ];
+    const esc = (v) => {
+      const s = String(v ?? '');
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [header.join(','), ...state.csvRows.map(r => r.map(esc).join(','))];
+    const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
+    downloadBlob(blob, `flux-s-session-${stamp}.csv`);
+    log(`Exported ${state.csvRows.length} samples to CSV.`, 'ok');
+  }
+
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  /* =========================================================================
+   * 13. READOUT TILES & LIVE CANVAS CHART
+   * ========================================================================= */
+  function renderTiles() {
+    const now = Date.now();
+    const trainerStale = (now - state.lastTrainerDataTs) > 3000;
+    const hrObj = getEffectiveHr();
+    const hrStale = hrObj.bpm === null;
+
+    $('tilePower').classList.toggle('stale', trainerStale);
+    $('tileFtp').classList.toggle('stale', trainerStale);
+    $('tileCadence').classList.toggle('stale', trainerStale);
+    $('tileSpeed').classList.toggle('stale', trainerStale);
+    $('tileHr').classList.toggle('stale', hrStale);
+
+    const p3 = state.power3s;
+    $('valPower').textContent = (!trainerStale && p3 !== null) ? Math.round(p3) : '—';
+    const targetLabel = state.mode === 'erg'
+      ? `${state.ergTarget} W`
+      : state.mode === 'sim'
+        ? `${state.simGrade.toFixed(1)} %`
+        : `${state.resTarget} %`;
+    $('subPower').textContent = `now ${(!trainerStale && state.instPower !== null) ? Math.round(state.instPower) : '—'} W · target ${targetLabel}`;
+
+    const zb = $('valZoneBadge');
+    if (!trainerStale && p3 !== null && state.ftp > 0) {
+      const pct = (p3 / state.ftp) * 100;
+      const wkg = p3 / state.riderWeight;
+      const zone = getPowerZone(pct);
+      $('valPctFtp').textContent = Math.round(pct);
+      $('valPctFtpWrap').style.color = zone.color;
+      $('valWkg').textContent = wkg.toFixed(1);
+      zb.style.display = 'inline-block';
+      zb.style.background = zone.color;
+      zb.textContent = `Z${zone.z}`;
+      $('subFtp').textContent = `Z${zone.z} ${zone.name} · FTP ${state.ftp} W`;
+    } else {
+      $('valPctFtp').textContent = '—';
+      $('valPctFtpWrap').style.color = '';
+      $('valWkg').textContent = '—';
+      zb.style.display = 'none';
+      $('subFtp').textContent = `FTP ${state.ftp} W · ${state.riderWeight} kg`;
+    }
+
+    $('valCadence').textContent = (!trainerStale && state.cadence !== null) ? Math.round(state.cadence) : '—';
+    $('valSpeed').textContent = (!trainerStale && state.speed !== null) ? state.speed.toFixed(1) : '—';
+
+    const hzb = $('valHrZoneBadge');
+    if (hrObj.bpm !== null) {
+      const pctMax = (hrObj.bpm / state.maxHr) * 100;
+      const hz = getHrZone(pctMax);
+      $('valHr').textContent = Math.round(hrObj.bpm);
+      hzb.style.display = 'inline-block';
+      hzb.style.background = hz.color;
+      hzb.textContent = `Z${hz.z}`;
+      const src = hrObj.source === 'trainer' ? ' · trainer' : '';
+      $('subHr').textContent = `${Math.round(pctMax)}% max · ${hz.name}${src}`;
+    } else {
+      $('valHr').textContent = '—';
+      hzb.style.display = 'none';
+      $('subHr').textContent = state.hrState === 'connected' ? 'no signal' : 'no HR monitor';
+    }
+
+    $('valTime').textContent = fmtHMS(state.elapsedSec);
+    $('subTime').textContent = state.recording ? (state.autoPaused ? 'Auto-paused' : 'Recording') : (state.elapsedSec > 0 ? 'Paused' : 'Idle');
+    $('valDistance').textContent = state.distanceKm.toFixed(2);
+    $('valWork').textContent = Math.round(state.workKj);
+
+    if (state.powerCount > 0) {
+      const avgP = state.powerSum / state.powerCount;
+      $('valAvgPower').textContent = Math.round(avgP);
+      $('valMaxPower').textContent = Math.round(state.powerMax);
+      $('subAvgPower').textContent = `avg ${Math.round((avgP / state.ftp) * 100)}% FTP · ${(avgP / state.riderWeight).toFixed(1)} W/kg`;
+    } else {
+      $('valAvgPower').textContent = '—';
+      $('valMaxPower').textContent = '—';
+      $('subAvgPower').textContent = 'avg —% FTP · — W/kg';
+    }
+
+    if (state.hrCount > 0) {
+      $('valAvgHr').textContent = Math.round(state.hrSum / state.hrCount);
+      $('valMaxHr').textContent = Math.round(state.hrMax);
+    } else {
+      $('valAvgHr').textContent = '—';
+      $('valMaxHr').textContent = '—';
+    }
+  }
+
+  function drawTelemetryChart() {
+    const canvas = $('telemetryCanvas');
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr)) {
+      canvas.width = Math.round(rect.width * dpr);
+      canvas.height = Math.round(rect.height * dpr);
+    }
+    const ctx = canvas.getContext('2d');
+    ctx.save();
+    ctx.scale(dpr, dpr);
+
+    const W = rect.width;
+    const H = rect.height;
+    const pad = { l: 38, r: 34, t: 10, b: 20 };
+    const pw = W - pad.l - pad.r;
+    const ph = H - pad.t - pad.b;
+
+    ctx.clearRect(0, 0, W, H);
+
+    const winMs = state.chartWindowSec * 1000;
+    const now = state.chartSamples.length ? state.chartSamples[state.chartSamples.length - 1].t : Date.now();
+    const tMin = now - winMs;
+    const visible = state.chartSamples.filter(s => s.t >= tMin);
+
+    let pMax = 300;
+    for (const s of visible) {
+      if (s.power !== null && s.power > pMax) pMax = s.power;
+      if (s.ergTarget !== null && s.ergTarget > pMax) pMax = s.ergTarget;
+    }
+    pMax = Math.ceil(pMax / 100) * 100;
+    const rightMax = 200;
+
+    ctx.strokeStyle = 'rgba(139, 155, 180, 0.14)';
+    ctx.lineWidth = 1;
+    ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    for (let i = 0; i <= 4; i++) {
+      const y = pad.t + (ph * i) / 4;
+      ctx.beginPath();
+      ctx.moveTo(pad.l, y);
+      ctx.lineTo(pad.l + pw, y);
+      ctx.stroke();
+
+      ctx.fillStyle = '#8b9bb4';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(Math.round(pMax * (1 - i / 4))), pad.l - 7, y);
+
+      ctx.textAlign = 'left';
+      ctx.fillText(String(Math.round(rightMax * (1 - i / 4))), pad.l + pw + 7, y);
+    }
+
+    // Bottom axis labels (-N min ... now)
+    ctx.fillStyle = '#6c7d96';
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    ctx.fillText(`-${Math.round(state.chartWindowSec / 60)} min`, pad.l, pad.t + ph + 5);
+    ctx.textAlign = 'right';
+    ctx.fillText('now', pad.l + pw, pad.t + ph + 5);
+
+    const xOf = (t) => pad.l + ((t - tMin) / winMs) * pw;
+    const yLeft = (v) => pad.t + ph - clamp(v / pMax, 0, 1) * ph;
+    const yRight = (v) => pad.t + ph - clamp(v / rightMax, 0, 1) * ph;
+
+    function drawSeries(getter, yFn, color, width = 1.8, dash = null) {
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineJoin = 'round';
+      if (dash) ctx.setLineDash(dash);
+      ctx.beginPath();
+      let drawing = false;
+      for (let i = 0; i < visible.length; i++) {
+        const val = getter(visible[i]);
+        if (val === null || val === undefined) { drawing = false; continue; }
+        const x = xOf(visible[i].t);
+        const y = yFn(val);
+        if (!drawing) { ctx.moveTo(x, y); drawing = true; }
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    drawSeries(s => s.ergTarget, yLeft, '#cbd5e1', 1.4, [5, 4]);
+    drawSeries(s => s.speed, yRight, '#38bdf8', 1.6);
+    drawSeries(s => s.cadence, yRight, '#2dd4bf', 1.6);
+    drawSeries(s => s.hr, yRight, '#fb7185', 1.9);
+    drawSeries(s => s.power, yLeft, '#facc15', 2.2);
+
+    ctx.restore();
+  }
+
+  /* =========================================================================
+   * 14. TRAINER CONTROL UI, DEBOUNCE & KEYBOARD SHORTCUTS
+   * ========================================================================= */
+  function setAckBar(text, cls = '') {
+    const b = $('cmdAckBar');
+    b.textContent = text;
+    b.className = `ack-bar ${cls}`;
+  }
+
+  function updateErgMeta() {
+    const pct = state.ftp > 0 ? Math.round((state.ergTarget / state.ftp) * 100) : 0;
+    const wkg = state.riderWeight > 0 ? (state.ergTarget / state.riderWeight).toFixed(1) : '0.0';
+    $('ergMeta').textContent = `${pct}% of FTP (${state.ftp} W) · ${wkg} W/kg`;
+  }
+
+  function syncControlInputs() {
+    $('ergReadout').textContent = state.ergTarget;
+    $('ergSlider').value = state.ergTarget;
+    $('ergInput').value = state.ergTarget;
+    updateErgMeta();
+
+    $('simReadout').textContent = state.simGrade.toFixed(1);
+    $('simSlider').value = state.simGrade;
+    $('simInput').value = state.simGrade;
+    $('simWind').value = state.simWind;
+    $('simCrr').value = state.simCrr;
+    $('simCw').value = state.simCw;
+    $('simBikeWeight').value = state.simBikeWeight;
+    $('simRiderWeight').value = state.riderWeight;
+
+    $('resReadout').textContent = state.resTarget;
+    $('resSlider').value = state.resTarget;
+    $('resInput').value = state.resTarget;
+  }
+
+  function switchMode(mode, sendNow = true) {
+    state.mode = mode;
+    document.querySelectorAll('.mode-tab').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+    $('paneErg').classList.toggle('active', mode === 'erg');
+    $('paneSim').classList.toggle('active', mode === 'sim');
+    $('paneRes').classList.toggle('active', mode === 'res');
+    renderTiles();
+    if (sendNow) scheduleSendControl();
+  }
+
+  function scheduleSendControl(immediate = false) {
+    clearTimeout(state.cmdDebounceTimer);
+    if (!state.trainerDriver) {
+      setAckBar('Not connected');
+      return;
+    }
+    if (immediate) {
+      sendCurrentControl(true);
+    } else {
+      setAckBar('Sending change…', 'pending');
+      state.cmdDebounceTimer = setTimeout(() => sendCurrentControl(false), 250);
+    }
+  }
+
+  async function sendCurrentControl(silent = false) {
+    if (!state.trainerDriver) return;
+    setAckBar('Sending…', 'pending');
+    try {
+      if (state.mode === 'erg') {
+        await state.trainerDriver.setErg(state.ergTarget);
+        setAckBar(`✓ Trainer set to ERG ${state.ergTarget} W`, 'ok');
+      } else if (state.mode === 'sim') {
+        await state.trainerDriver.setSlope({
+          grade: state.simGrade,
+          wind: state.simWind,
+          crr: state.simCrr,
+          cw: state.simCw,
+          riderWeight: state.riderWeight,
+          bikeWeight: state.simBikeWeight,
+        });
+        setAckBar(`✓ Trainer set to Slope ${state.simGrade.toFixed(1)} %`, 'ok');
+      } else {
+        await state.trainerDriver.setResistance(state.resTarget);
+        setAckBar(`✓ Trainer set to Resistance ${state.resTarget} %`, 'ok');
+      }
+    } catch (err) {
+      setAckBar(`✕ Rejected: ${err.message || err}`, 'err');
+      if (!silent) log(`Trainer rejected command: ${err.message || err}`, 'err');
+    }
+  }
+
+  function adjustActiveValue(dir, big) {
+    if (state.mode === 'erg') {
+      state.ergTarget = clamp(state.ergTarget + dir * (big ? 25 : 5), 0, 1500);
+    } else if (state.mode === 'sim') {
+      state.simGrade = Math.round(clamp(state.simGrade + dir * (big ? 2 : 0.5), -10, 15) * 10) / 10;
+    } else {
+      state.resTarget = clamp(state.resTarget + dir * (big ? 10 : 2), 0, 100);
+    }
+    syncControlInputs();
+    scheduleSendControl();
+  }
+
+  /* =========================================================================
+   * 15. WORKOUT DATA MODEL, BUILDER, PROFILE CHART, PLAYER & AUDIO BEEPS
+   * ========================================================================= */
+  function createSampleWorkout() {
+    return {
+      name: 'Flux S Sample: VO2 + Climb',
+      blocks: [
+        {
+          name: 'Warm-up',
+          repeat: 1,
+          steps: [
+            { dur: 180, mode: 'erg', target: 120 },
+            { dur: 120, mode: 'erg', target: 165 },
+          ],
+        },
+        {
+          name: 'VO2 Intervals',
+          repeat: 5,
+          steps: [
+            { dur: 60,  mode: 'erg', target: 300 },
+            { dur: 120, mode: 'erg', target: 130 },
+          ],
+        },
+        {
+          name: 'Hill Climb',
+          repeat: 1,
+          steps: [
+            { dur: 120, mode: 'sim', target: 4 },
+            { dur: 120, mode: 'sim', target: 5.5 },
+            { dur: 120, mode: 'sim', target: 7 },
+          ],
+        },
+        {
+          name: 'Cool-down',
+          repeat: 1,
+          steps: [
+            { dur: 180, mode: 'res', target: 20 },
+            { dur: 120, mode: 'res', target: 10 },
+          ],
+        },
+      ],
+    };
+  }
+
+  function flattenWorkout(wk) {
+    const plan = [];
+    let cumStart = 0;
+    for (let bi = 0; bi < wk.blocks.length; bi++) {
+      const blk = wk.blocks[bi];
+      const rep = clamp(parseInt(blk.repeat, 10) || 1, 1, 99);
+      for (let r = 1; r <= rep; r++) {
+        for (let si = 0; si < blk.steps.length; si++) {
+          const st = blk.steps[si];
+          const dur = Math.max(1, Math.round(st.dur || 1));
+          plan.push({
+            blockIdx: bi,
+            blockName: blk.name || `Block ${bi + 1}`,
+            rep: r,
+            repTotal: rep,
+            stepIdxInBlock: si,
+            stepCountInBlock: blk.steps.length,
+            dur,
+            mode: st.mode,
+            target: Number(st.target),
+            startSec: cumStart,
+            endSec: cumStart + dur,
+          });
+          cumStart += dur;
+        }
+      }
+    }
+    return plan;
+  }
+
+  function recomputePlan(liveEdit = true) {
+    const prevElapsed = state.player.totalElapsed;
+    state.flatPlan = flattenWorkout(state.workout);
+    const total = state.flatPlan.reduce((a, s) => a + s.dur, 0);
+    state.player.totalDuration = total;
+    $('wkTotalMeta').textContent = `Total ${fmtTime(total)} · ${state.flatPlan.length} steps`;
+
+    if (liveEdit && state.player.active) {
+      if (state.flatPlan.length === 0) {
+        stopWorkout();
+      } else if (prevElapsed >= total) {
+        finishWorkout();
+      } else {
+        let idx = state.flatPlan.findIndex(s => prevElapsed >= s.startSec && prevElapsed < s.endSec);
+        if (idx < 0) idx = state.flatPlan.length - 1;
+        state.player.stepIdx = idx;
+        state.player.stepElapsed = prevElapsed - state.flatPlan[idx].startSec;
+        applyCurrentWorkoutStep(false);
+      }
+    }
+
+    try { localStorage.setItem(LS.LAST_WK, JSON.stringify(state.workout)); } catch (_) {}
+    renderPlayerUI();
+    drawProfileChart();
+  }
+
+  function renderWorkoutBuilder() {
+    $('wkNameInput').value = state.workout.name;
+    const container = $('wkBlocksContainer');
+    container.innerHTML = '';
+
+    state.workout.blocks.forEach((blk, bi) => {
+      const blkDur = blk.steps.reduce((a, s) => a + Math.max(1, Math.round(s.dur || 0)), 0) * clamp(blk.repeat || 1, 1, 99);
+      const card = document.createElement('div');
+      card.className = 'block-card';
+
+      const head = document.createElement('div');
+      head.className = 'block-head';
+      head.innerHTML = `
+        <input type="text" class="blk-name" value="${escHtml(blk.name)}" placeholder="Block name">
+        <span class="muted" style="font-size:12px">repeat ×</span>
+        <input type="number" class="blk-rep" min="1" max="99" value="${blk.repeat}" title="Repeat count (1–99)">
+        <span class="block-dur">= ${fmtTime(blkDur)}</span>
+        <span class="spacer"></span>
+        <button class="icon-btn" title="Move block up" ${bi === 0 ? 'disabled' : ''}>↑</button>
+        <button class="icon-btn" title="Move block down" ${bi === state.workout.blocks.length - 1 ? 'disabled' : ''}>↓</button>
+        <button class="icon-btn" title="Duplicate block">⧉</button>
+        <button class="icon-btn" title="Delete block">✕</button>
+      `;
+
+      const [btnUp, btnDown, btnDup, btnDel] = head.querySelectorAll('button');
+      head.querySelector('.blk-name').oninput = (e) => { blk.name = e.target.value; recomputePlan(true); };
+      head.querySelector('.blk-rep').onchange = (e) => {
+        blk.repeat = clamp(parseInt(e.target.value, 10) || 1, 1, 99);
+        e.target.value = blk.repeat;
+        recomputePlan(true);
+        renderWorkoutBuilder();
+      };
+      btnUp.onclick = () => {
+        if (bi > 0) {
+          [state.workout.blocks[bi - 1], state.workout.blocks[bi]] = [state.workout.blocks[bi], state.workout.blocks[bi - 1]];
+          recomputePlan(true); renderWorkoutBuilder();
+        }
+      };
+      btnDown.onclick = () => {
+        if (bi < state.workout.blocks.length - 1) {
+          [state.workout.blocks[bi + 1], state.workout.blocks[bi]] = [state.workout.blocks[bi], state.workout.blocks[bi + 1]];
+          recomputePlan(true); renderWorkoutBuilder();
+        }
+      };
+      btnDup.onclick = () => {
+        const copy = JSON.parse(JSON.stringify(blk));
+        copy.name = `${blk.name} (copy)`;
+        state.workout.blocks.splice(bi + 1, 0, copy);
+        recomputePlan(true); renderWorkoutBuilder();
+      };
+      btnDel.onclick = () => {
+        state.workout.blocks.splice(bi, 1);
+        recomputePlan(true); renderWorkoutBuilder();
+      };
+
+      const table = document.createElement('table');
+      table.className = 'step-table';
+      table.innerHTML = `<thead><tr><th>#</th><th>DURATION</th><th>MODE</th><th>TARGET</th><th style="text-align:right"></th></tr></thead><tbody></tbody>`;
+      const tbody = table.querySelector('tbody');
+
+      blk.steps.forEach((st, si) => {
+        const tr = document.createElement('tr');
+        const unit = st.mode === 'erg' ? 'W' : '%';
+        const stepAttr = st.mode === 'sim' ? '0.5' : '1';
+        tr.innerHTML = `
+          <td class="row-num">${si + 1}</td>
+          <td><input type="text" class="step-dur" value="${fmtDurShort(st.dur)}" title="mm:ss or seconds"></td>
+          <td>
+            <select class="step-mode">
+              <option value="erg" ${st.mode === 'erg' ? 'selected' : ''}>ERG</option>
+              <option value="sim" ${st.mode === 'sim' ? 'selected' : ''}>Slope</option>
+              <option value="res" ${st.mode === 'res' ? 'selected' : ''}>Resistance</option>
+            </select>
+          </td>
+          <td>
+            <input type="number" class="step-target" step="${stepAttr}" value="${st.target}">
+            <span class="step-unit">${unit}</span>
+          </td>
+          <td style="text-align:right; white-space:nowrap">
+            <button class="icon-btn s-up" ${si === 0 ? 'disabled' : ''}>↑</button>
+            <button class="icon-btn s-dn" ${si === blk.steps.length - 1 ? 'disabled' : ''}>↓</button>
+            <button class="icon-btn s-dup">⧉</button>
+            <button class="icon-btn s-del">✕</button>
+          </td>
+        `;
+
+        tr.querySelector('.step-dur').onchange = (e) => {
+          const parsed = parseDurInput(e.target.value);
+          if (Number.isFinite(parsed) && parsed > 0) st.dur = clamp(parsed, 1, 86400);
+          e.target.value = fmtDurShort(st.dur);
+          recomputePlan(true);
+          renderWorkoutBuilder();
+        };
+        tr.querySelector('.step-mode').onchange = (e) => {
+          st.mode = e.target.value;
+          st.target = clampTargetForMode(st.mode, st.target).value;
+          recomputePlan(true);
+          renderWorkoutBuilder();
+        };
+        tr.querySelector('.step-target').onchange = (e) => {
+          const v = parseFloat(e.target.value);
+          if (Number.isFinite(v)) st.target = clampTargetForMode(st.mode, v).value;
+          e.target.value = st.target;
+          recomputePlan(true);
+        };
+        tr.querySelector('.s-up').onclick = () => {
+          if (si > 0) { [blk.steps[si - 1], blk.steps[si]] = [blk.steps[si], blk.steps[si - 1]]; recomputePlan(true); renderWorkoutBuilder(); }
+        };
+        tr.querySelector('.s-dn').onclick = () => {
+          if (si < blk.steps.length - 1) { [blk.steps[si + 1], blk.steps[si]] = [blk.steps[si], blk.steps[si + 1]]; recomputePlan(true); renderWorkoutBuilder(); }
+        };
+        tr.querySelector('.s-dup').onclick = () => {
+          blk.steps.splice(si + 1, 0, { ...st }); recomputePlan(true); renderWorkoutBuilder();
+        };
+        tr.querySelector('.s-del').onclick = () => {
+          blk.steps.splice(si, 1); recomputePlan(true); renderWorkoutBuilder();
+        };
+        tbody.appendChild(tr);
+      });
+
+      const foot = document.createElement('div');
+      foot.className = 'block-foot';
+      const addStepBtn = document.createElement('button');
+      addStepBtn.className = 'sm';
+      addStepBtn.textContent = '+ Step';
+      addStepBtn.onclick = () => {
+        const last = blk.steps[blk.steps.length - 1];
+        blk.steps.push(last ? { ...last } : { dur: 60, mode: 'erg', target: 150 });
+        recomputePlan(true);
+        renderWorkoutBuilder();
+      };
+      foot.appendChild(addStepBtn);
+
+      card.appendChild(head);
+      card.appendChild(table);
+      card.appendChild(foot);
+      container.appendChild(card);
+    });
+  }
+
+  function clampTargetForMode(mode, val) {
+    if (mode === 'erg') {
+      const c = clamp(Math.round(val), 0, 1500);
+      return { value: c, clamped: c !== Math.round(val) };
+    }
+    if (mode === 'sim') {
+      const r = Math.round(val * 10) / 10;
+      const c = clamp(r, -10, 15);
+      return { value: c, clamped: c !== r };
+    }
+    const c = clamp(Math.round(val), 0, 100);
+    return { value: c, clamped: c !== Math.round(val) };
+  }
+
+  function drawProfileChart() {
+    const canvas = $('profileCanvas');
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr)) {
+      canvas.width = Math.round(rect.width * dpr);
+      canvas.height = Math.round(rect.height * dpr);
+    }
+    const ctx = canvas.getContext('2d');
+    ctx.save();
+    ctx.scale(dpr, dpr);
+
+    const W = rect.width;
+    const H = rect.height;
+    ctx.clearRect(0, 0, W, H);
+
+    const plan = state.flatPlan;
+    const total = state.player.totalDuration;
+    if (!plan.length || total <= 0) {
+      ctx.fillStyle = '#5e6f88';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Add blocks and steps to see workout profile', W / 2, H / 2);
+      ctx.restore();
+      return;
+    }
+
+    let maxErg = Math.max(state.ftp * 1.25, 260);
+    for (const s of plan) if (s.mode === 'erg' && s.target > maxErg) maxErg = s.target;
+
+    const padTop = 8;
+    const barMaxH = H - padTop;
+    const curPos = state.player.active ? state.player.totalElapsed : -1;
+
+    for (const s of plan) {
+      const x = (s.startSec / total) * W;
+      const w = Math.max(1.5, (s.dur / total) * W - 0.6);
+      let norm = 0.25;
+      let color = '#facc15'; // ERG = yellow
+      if (s.mode === 'erg') {
+        norm = clamp(s.target / maxErg, 0.14, 1);
+        color = '#facc15';
+      } else if (s.mode === 'sim') {
+        norm = clamp((s.target + 10) / 25, 0.22, 1);
+        color = '#8b5cf6'; // Slope = purple
+      } else {
+        norm = clamp(s.target / 100, 0.15, 1);
+        color = '#2dd4bf'; // Resistance = teal
+      }
+      const bh = Math.max(10, norm * barMaxH);
+      const y = H - bh;
+
+      const finished = state.player.active && s.endSec <= curPos;
+      ctx.fillStyle = color;
+      ctx.globalAlpha = finished ? 0.32 : 0.95;
+      ctx.fillRect(x, y, w, bh);
+
+      // Partial progress dimming inside current step
+      if (state.player.active && curPos > s.startSec && curPos < s.endSec) {
+        const doneW = ((curPos - s.startSec) / s.dur) * w;
+        ctx.fillStyle = '#111722';
+        ctx.globalAlpha = 0.52;
+        ctx.fillRect(x, y, doneW, bh);
+      }
+    }
+
+    ctx.globalAlpha = 1;
+    if (state.player.active) {
+      const cx = clamp((curPos / total) * W, 1, W - 1);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, 0);
+      ctx.lineTo(cx, H);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  let audioCtx = null;
+  function playBeep(high = false) {
+    if (!state.beeps) return;
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = high ? 1046 : 740;
+      gain.gain.value = 0.08;
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + (high ? 0.16 : 0.09));
+    } catch (_) {}
+  }
+
+  function stepDesc(s) {
+    if (!s) return 'Finish';
+    if (s.mode === 'erg') return `ERG ${s.target} W`;
+    if (s.mode === 'sim') return `Slope ${s.target} %`;
+    return `Resistance ${s.target} %`;
+  }
+
+  function applyCurrentWorkoutStep(logIt = true) {
+    const step = state.flatPlan[state.player.stepIdx];
+    if (!step) return;
+    if (step.mode === 'erg') state.ergTarget = step.target;
+    else if (step.mode === 'sim') state.simGrade = step.target;
+    else state.resTarget = step.target;
+    syncControlInputs();
+    switchMode(step.mode, false);
+    scheduleSendControl(true);
+    if (logIt) log(`Workout: ${step.blockName} (${step.rep}/${step.repTotal}) — ${stepDesc(step)} for ${fmtDurShort(step.dur)}`);
+  }
+
+  function updatePlayerButtons() {
+    const connected = state.trainerState === 'connected' || state.trainerState === 'demo';
+    const act = state.player.active;
+    $('btnPlStart').disabled = act || !connected || state.flatPlan.length === 0;
+    $('btnPlPause').disabled = !act;
+    $('btnPlPause').textContent = state.player.paused ? '▶ Resume' : '⏸ Pause';
+    $('btnPlBack').disabled = !act;
+    $('btnPlSkip').disabled = !act;
+    $('btnPlStop').disabled = !act;
+  }
+
+  function renderPlayerUI() {
+    const p = state.player;
+    updatePlayerButtons();
+    if (!p.active || !state.flatPlan[p.stepIdx]) {
+      const first = state.flatPlan[0];
+      $('plStepTitle').textContent = first
+        ? `${state.workout.name} — ${stepDesc(first)}`
+        : 'Empty workout';
+      $('plNextStep').textContent = first
+        ? `First: ${first.blockName} · ${stepDesc(first)} for ${fmtDurShort(first.dur)}`
+        : 'Add steps below';
+      $('plCountdown').textContent = fmtTime(p.totalDuration);
+      $('plProgressFill').style.width = '0%';
+      $('plElapsedTotal').textContent = `0:00 / ${fmtTime(p.totalDuration)}`;
+      return;
+    }
+
+    const cur = state.flatPlan[p.stepIdx];
+    const next = state.flatPlan[p.stepIdx + 1] || null;
+    const rem = Math.max(0, cur.dur - p.stepElapsed);
+    const pct = p.totalDuration > 0 ? clamp((p.totalElapsed / p.totalDuration) * 100, 0, 100) : 0;
+
+    const repTag = cur.repTotal > 1 ? ` (${cur.rep}/${cur.repTotal})` : '';
+    const pauseTag = p.paused ? ' · PAUSED' : (state.autoPaused ? ' · AUTO-PAUSED' : '');
+    $('plStepTitle').textContent = `${cur.blockName}${repTag} · step ${cur.stepIdxInBlock + 1}/${cur.stepCountInBlock} — ${stepDesc(cur)}${pauseTag}`;
+    $('plNextStep').textContent = next ? `Next: ${stepDesc(next)} for ${fmtDurShort(next.dur)}` : 'Next: Finish';
+    $('plCountdown').textContent = fmtTime(rem);
+    $('plProgressFill').style.width = `${pct.toFixed(2)}%`;
+    $('plElapsedTotal').textContent = `${fmtTime(p.totalElapsed)} / ${fmtTime(p.totalDuration)}`;
+  }
+
+  function startWorkout() {
+    const connected = state.trainerState === 'connected' || state.trainerState === 'demo';
+    if (!connected) { log('Connect a trainer or start Demo mode first.', 'warn'); return; }
+    if (state.flatPlan.length === 0) return;
+    state.player.active = true;
+    state.player.paused = false;
+    state.player.stepIdx = 0;
+    state.player.stepElapsed = 0;
+    state.player.totalElapsed = 0;
+    if (!state.recording) startRecording();
+    applyCurrentWorkoutStep(true);
+    playBeep(true);
+    renderPlayerUI();
+    drawProfileChart();
+  }
+
+  function pauseWorkout() {
+    if (!state.player.active) return;
+    state.player.paused = !state.player.paused;
+    log(state.player.paused ? 'Workout paused.' : 'Workout resumed.');
+    renderPlayerUI();
+  }
+
+  function backWorkoutStep() {
+    if (!state.player.active) return;
+    if (state.player.stepElapsed < 5 && state.player.stepIdx > 0) state.player.stepIdx--;
+    state.player.stepElapsed = 0;
+    state.player.totalElapsed = state.flatPlan[state.player.stepIdx].startSec;
+    applyCurrentWorkoutStep(true);
+    renderPlayerUI();
+    drawProfileChart();
+  }
+
+  function skipWorkoutStep() {
+    if (!state.player.active) return;
+    if (state.player.stepIdx + 1 >= state.flatPlan.length) { finishWorkout(); return; }
+    state.player.stepIdx++;
+    state.player.stepElapsed = 0;
+    state.player.totalElapsed = state.flatPlan[state.player.stepIdx].startSec;
+    applyCurrentWorkoutStep(true);
+    playBeep(true);
+    renderPlayerUI();
+    drawProfileChart();
+  }
+
+  function stopWorkout() {
+    state.player.active = false;
+    state.player.paused = false;
+    state.player.stepIdx = 0;
+    state.player.stepElapsed = 0;
+    state.player.totalElapsed = 0;
+    log('Workout stopped.');
+    renderPlayerUI();
+    drawProfileChart();
+  }
+
+  function finishWorkout() {
+    state.player.active = false;
+    state.player.paused = false;
+    state.player.totalElapsed = state.player.totalDuration;
+    playBeep(true);
+    log(`Workout "${state.workout.name}" completed!`, 'ok');
+    renderPlayerUI();
+    drawProfileChart();
+  }
+
+  function tickWorkout1Hz() {
+    const cur = state.flatPlan[state.player.stepIdx];
+    if (!cur) { finishWorkout(); return; }
+    state.player.stepElapsed++;
+    state.player.totalElapsed = cur.startSec + state.player.stepElapsed;
+
+    const rem = cur.dur - state.player.stepElapsed;
+    if (rem > 0 && rem <= 3) playBeep(false);
+
+    if (state.player.stepElapsed >= cur.dur) {
+      if (state.player.stepIdx + 1 >= state.flatPlan.length) { finishWorkout(); return; }
+      state.player.stepIdx++;
+      state.player.stepElapsed = 0;
+      state.player.totalElapsed = state.flatPlan[state.player.stepIdx].startSec;
+      applyCurrentWorkoutStep(true);
+      playBeep(true);
+    }
+    renderPlayerUI();
+    drawProfileChart();
+  }
+
+  /* =========================================================================
+   * 16. WORKOUT LIBRARY & JSON VALIDATION
+   * ========================================================================= */
+  function loadWorkoutLibrary() {
+    try {
+      const raw = localStorage.getItem(LS.WORKOUTS);
+      const obj = raw ? JSON.parse(raw) : {};
+      return obj && typeof obj === 'object' ? obj : {};
+    } catch (_) { return {}; }
+  }
+
+  function saveWorkoutLibrary(lib) {
+    localStorage.setItem(LS.WORKOUTS, JSON.stringify(lib));
+    renderLibrarySelect();
+  }
+
+  function renderLibrarySelect() {
+    const sel = $('wkLibrarySelect');
+    const lib = loadWorkoutLibrary();
+    const names = Object.keys(lib).sort();
+    sel.innerHTML = `<option value="">— Saved workouts (${names.length}) —</option>`;
+    for (const n of names) {
+      const opt = document.createElement('option');
+      opt.value = n;
+      opt.textContent = n;
+      if (state.workout && state.workout.name === n) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  }
+
+  function normalizeMode(raw) {
+    const s = String(raw || '').trim().toLowerCase();
+    if (['erg', 'power', 'watts', 'w'].includes(s)) return 'erg';
+    if (['sim', 'slope', 'grade', 'incline', 'gradient'].includes(s)) return 'sim';
+    if (['res', 'resistance', 'level'].includes(s)) return 'res';
+    return null;
+  }
+
+  function validateWorkoutJson(obj) {
+    if (!obj || typeof obj !== 'object' || !Array.isArray(obj.blocks)) {
+      throw new Error('JSON must be an object with a "blocks" array.');
+    }
+    const warnings = [];
+    const blocks = [];
+    obj.blocks.forEach((b, bi) => {
+      if (!b || !Array.isArray(b.steps)) {
+        warnings.push(`Block ${bi + 1}: skipped (missing steps array).`);
+        return;
+      }
+      const rep = clamp(parseInt(b.repeat, 10) || 1, 1, 99);
+      const steps = [];
+      b.steps.forEach((s, si) => {
+        const mode = normalizeMode(s.mode);
+        const dur = Math.round(Number(s.dur));
+        const tgt = Number(s.target);
+        if (!mode || !Number.isFinite(dur) || dur <= 0 || !Number.isFinite(tgt)) {
+          warnings.push(`Block ${bi + 1} step ${si + 1}: skipped (invalid mode/duration/target).`);
+          return;
+        }
+        const cl = clampTargetForMode(mode, tgt);
+        if (cl.clamped) warnings.push(`Block ${bi + 1} step ${si + 1}: target ${tgt} limited to ${cl.value}.`);
+        steps.push({ dur, mode, target: cl.value });
+      });
+      if (steps.length > 0) blocks.push({ name: String(b.name || `Block ${bi + 1}`), repeat: rep, steps });
+    });
+    if (blocks.length === 0) throw new Error('Workout JSON contains no valid steps.');
+    return { workout: { name: String(obj.name || 'Imported Workout'), blocks }, warnings };
+  }
+
+  /* =========================================================================
+   * 17. EXCEL (.xlsx) EXPORT (MATCHES PHOTO 1) & .xlsx / .csv / .json IMPORT
+   * ========================================================================= */
+  const CRC32_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[i] = c >>> 0;
+    }
+    return t;
+  })();
+
+  function crc32(u8) {
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < u8.length; i++) c = CRC32_TABLE[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  function makeStoredZip(files) {
+    const enc = new TextEncoder();
+    const localParts = [];
+    const centralParts = [];
+    let offset = 0;
+
+    for (const f of files) {
+      const nameBytes = enc.encode(f.name);
+      const dataBytes = f.data instanceof Uint8Array ? f.data : enc.encode(f.data);
+      const crc = crc32(dataBytes);
+
+      const lh = new ArrayBuffer(30 + nameBytes.length);
+      const lv = new DataView(lh);
+      lv.setUint32(0, 0x04034b50, true);
+      lv.setUint16(4, 20, true);
+      lv.setUint16(6, 0x0800, true);
+      lv.setUint16(8, 0, true);
+      lv.setUint32(14, crc, true);
+      lv.setUint32(18, dataBytes.length, true);
+      lv.setUint32(22, dataBytes.length, true);
+      lv.setUint16(26, nameBytes.length, true);
+      new Uint8Array(lh, 30).set(nameBytes);
+
+      const ch = new ArrayBuffer(46 + nameBytes.length);
+      const cv = new DataView(ch);
+      cv.setUint32(0, 0x02014b50, true);
+      cv.setUint16(4, 20, true);
+      cv.setUint16(6, 20, true);
+      cv.setUint16(8, 0x0800, true);
+      cv.setUint16(10, 0, true);
+      cv.setUint32(16, crc, true);
+      cv.setUint32(20, dataBytes.length, true);
+      cv.setUint32(24, dataBytes.length, true);
+      cv.setUint16(28, nameBytes.length, true);
+      cv.setUint32(42, offset, true);
+      new Uint8Array(ch, 46).set(nameBytes);
+
+      localParts.push(new Uint8Array(lh), dataBytes);
+      centralParts.push(new Uint8Array(ch));
+      offset += lh.byteLength + dataBytes.length;
+    }
+
+    const cdStart = offset;
+    let cdSize = 0;
+    for (const p of centralParts) cdSize += p.length;
+
+    const eocd = new ArrayBuffer(22);
+    const ev = new DataView(eocd);
+    ev.setUint32(0, 0x06054b50, true);
+    ev.setUint16(8, files.length, true);
+    ev.setUint16(10, files.length, true);
+    ev.setUint32(12, cdSize, true);
+    ev.setUint32(16, cdStart, true);
+
+    const out = new Uint8Array(offset + cdSize + 22);
+    let pos = 0;
+    for (const p of localParts) { out.set(p, pos); pos += p.length; }
+    for (const p of centralParts) { out.set(p, pos); pos += p.length; }
+    out.set(new Uint8Array(eocd), pos);
+    return out;
+  }
+
+  function xmlEsc(s) {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+  }
+
+  function colLetters(idx0) {
+    let n = idx0 + 1, s = '';
+    while (n > 0) {
+      const r = (n - 1) % 26;
+      s = String.fromCharCode(65 + r) + s;
+      n = Math.floor((n - 1) / 26);
+    }
+    return s;
+  }
+
+  function cellInlineStr(ref, text, style = 0) {
+    return `<c r="${ref}" t="inlineStr" s="${style}"><is><t>${xmlEsc(text)}</t></is></c>`;
+  }
+  function cellNum(ref, num, style = 0) {
+    return `<c r="${ref}" s="${style}"><v>${num}</v></c>`;
+  }
+
+  function exportWorkoutXlsx(wk) {
+    const modeCode = (m) => m === 'sim' ? 'SLOPE' : (m === 'res' ? 'RES' : 'ERG');
+    const unitFor = (m) => m === 'erg' ? 'W' : '%';
+
+    // Styles: 0=normal, 1=bold, 2=italic note, 3=header (bold black on light steel-blue #B4C6E7), 4=italic unit
+    const rowsXml = [];
+    rowsXml.push(`<row r="1">${cellInlineStr('A1', 'Workout', 1)}${cellInlineStr('B1', wk.name || 'Workout', 1)}</row>`);
+    rowsXml.push(`<row r="2">${cellInlineStr('A2', 'Edit the table below, save as .xlsx, then use Import in the Flux S GUI. Instructions on the Help sheet.', 2)}</row>`);
+    const headers = ['Block', 'Repeat', 'Minutes', 'Seconds', 'Mode', 'Target', 'Unit'];
+    rowsXml.push(`<row r="4">${headers.map((h, i) => cellInlineStr(`${colLetters(i)}4`, h, 3)).join('')}</row>`);
+
+    let r = 5;
+    for (const blk of wk.blocks) {
+      blk.steps.forEach((st, si) => {
+        const mins = Math.floor(st.dur / 60);
+        const secs = st.dur % 60;
+        const mc = modeCode(st.mode);
+        const formula = `IF(E${r}="ERG","W",IF(E${r}="SLOPE","%",IF(E${r}="RES","%","")))`;
+        const cells = [];
+        if (si === 0) {
+          cells.push(cellInlineStr(`A${r}`, blk.name || '', 1));
+          cells.push(cellNum(`B${r}`, clamp(parseInt(blk.repeat, 10) || 1, 1, 99), 0));
+        }
+        cells.push(cellNum(`C${r}`, mins, 0));
+        cells.push(cellNum(`D${r}`, secs, 0));
+        cells.push(cellInlineStr(`E${r}`, mc, 0));
+        cells.push(cellNum(`F${r}`, Number(st.target), 0));
+        cells.push(`<c r="G${r}" t="str" s="4"><f>${xmlEsc(formula)}</f><v>${xmlEsc(unitFor(st.mode))}</v></c>`);
+        rowsXml.push(`<row r="${r}">${cells.join('')}</row>`);
+        r++;
+      });
+    }
+
+    const sheet1Xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetViews>
+    <sheetView tabSelected="1" workbookViewId="0">
+      <pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/>
+    </sheetView>
+  </sheetViews>
+  <cols>
+    <col min="1" max="1" width="22" customWidth="1"/>
+    <col min="2" max="2" width="10" customWidth="1"/>
+    <col min="3" max="3" width="10" customWidth="1"/>
+    <col min="4" max="4" width="10" customWidth="1"/>
+    <col min="5" max="5" width="11" customWidth="1"/>
+    <col min="6" max="6" width="11" customWidth="1"/>
+    <col min="7" max="7" width="8" customWidth="1"/>
+  </cols>
+  <sheetData>${rowsXml.join('')}</sheetData>
+  <dataValidations count="2">
+    <dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="E5:E500">
+      <formula1>"ERG,SLOPE,RES"</formula1>
+    </dataValidation>
+    <dataValidation type="whole" operator="between" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="B5:B500">
+      <formula1>1</formula1>
+      <formula2>99</formula2>
+    </dataValidation>
+  </dataValidations>
+</worksheet>`;
+
+    const helpRows = [
+      ['Tacx Flux S Workout Sheet Guide', ''],
+      ['', ''],
+      ['Column', 'Description'],
+      ['Block', 'Name of the block. Fill only on the first row of a block; empty cells continue the block above. A new block starts whenever Block changes or Repeat has a value.'],
+      ['Repeat', 'Number of times to repeat the block (whole number 1–99). Fill only on the first row of a block.'],
+      ['Minutes', 'Step duration minutes (whole number >= 0).'],
+      ['Seconds', 'Step duration seconds (0–59, or total seconds if Minutes is 0). You may also use a single "Duration" column with mm:ss text.'],
+      ['Mode', 'ERG (power in W, aliases: power/watts), SLOPE (grade %, aliases: sim/grade), or RES (resistance %, aliases: resistance).'],
+      ['Target', 'Target value: ERG 0–1500 W, SLOPE -10 to +15 %, RES 0–100 %. Out-of-range values are automatically limited on import.'],
+      ['Unit', 'Formula column showing W or % automatically (ignored on import).'],
+      ['Workout Name', 'Cell B1 on the Workout sheet sets the imported workout name.'],
+    ];
+    const helpRowsXml = helpRows.map((pair, idx) => {
+      const rn = idx + 1;
+      const st = idx === 0 ? 1 : (idx === 2 ? 3 : 0);
+      return `<row r="${rn}">${cellInlineStr(`A${rn}`, pair[0], idx >= 3 ? 1 : st)}${cellInlineStr(`B${rn}`, pair[1], st)}</row>`;
+    }).join('');
+
+    const sheet2Xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <cols>
+    <col min="1" max="1" width="18" customWidth="1"/>
+    <col min="2" max="2" width="95" customWidth="1"/>
+  </cols>
+  <sheetData>${helpRowsXml}</sheetData>
+</worksheet>`;
+
+    const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="4">
+    <font><sz val="11"/><name val="Calibri"/></font>
+    <font><b/><sz val="11"/><name val="Calibri"/></font>
+    <font><i/><sz val="11"/><color rgb="FF404040"/><name val="Calibri"/></font>
+    <font><i/><sz val="11"/><name val="Calibri"/></font>
+  </fonts>
+  <fills count="3">
+    <fill><patternFill patternType="none"/></fill>
+    <fill><patternFill patternType="gray125"/></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFB4C6E7"/><bgColor indexed="64"/></patternFill></fill>
+  </fills>
+  <borders count="1">
+    <border><left/><right/><top/><bottom/><diagonal/></border>
+  </borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="5">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+    <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+    <xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+    <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+    <xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+  </cellXfs>
+</styleSheet>`;
+
+    const workbookXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Workout" sheetId="1" r:id="rId1"/>
+    <sheet name="Help" sheetId="2" r:id="rId2"/>
+  </sheets>
+</workbook>`;
+
+    const workbookRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`;
+
+    const rootRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`;
+
+    const contentTypesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>`;
+
+    const zipBytes = makeStoredZip([
+      { name: '[Content_Types].xml', data: contentTypesXml },
+      { name: '_rels/.rels', data: rootRelsXml },
+      { name: 'xl/workbook.xml', data: workbookXml },
+      { name: 'xl/_rels/workbook.xml.rels', data: workbookRelsXml },
+      { name: 'xl/styles.xml', data: stylesXml },
+      { name: 'xl/worksheets/sheet1.xml', data: sheet1Xml },
+      { name: 'xl/worksheets/sheet2.xml', data: sheet2Xml },
+    ]);
+
+    const safeName = (wk.name || 'workout').replace(/[^a-z0-9\-_ ]+/gi, '_').trim() || 'workout';
+    const blob = new Blob([zipBytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    downloadBlob(blob, `${safeName}.xlsx`);
+    log(`Exported workout to ${safeName}.xlsx`, 'ok');
+  }
+
+  async function inflateRaw(u8) {
+    if (typeof DecompressionStream === 'undefined') {
+      throw new Error('This browser does not support DecompressionStream for .xlsx files.');
+    }
+    const ds = new DecompressionStream('deflate-raw');
+    const writer = ds.writable.getWriter();
+    writer.write(u8);
+    writer.close();
+    const out = await new Response(ds.readable).arrayBuffer();
+    return new Uint8Array(out);
+  }
+
+  async function readZipEntries(arrayBuf) {
+    const u8 = new Uint8Array(arrayBuf);
+    const dv = new DataView(arrayBuf);
+    let eocdPos = -1;
+    const minPos = Math.max(0, u8.length - 65557);
+    for (let i = u8.length - 22; i >= minPos; i--) {
+      if (dv.getUint32(i, true) === 0x06054b50) { eocdPos = i; break; }
+    }
+    if (eocdPos < 0) throw new Error('Not a valid ZIP / .xlsx file.');
+
+    const entryCount = dv.getUint16(eocdPos + 10, true);
+    const cdOffset = dv.getUint32(eocdPos + 16, true);
+    const dec = new TextDecoder('utf-8');
+    const entries = new Map();
+
+    let pos = cdOffset;
+    for (let i = 0; i < entryCount; i++) {
+      if (dv.getUint32(pos, true) !== 0x02014b50) break;
+      const method = dv.getUint16(pos + 10, true);
+      const compSize = dv.getUint32(pos + 20, true);
+      const fnameLen = dv.getUint16(pos + 28, true);
+      const extraLen = dv.getUint16(pos + 30, true);
+      const commentLen = dv.getUint16(pos + 32, true);
+      const localOff = dv.getUint32(pos + 42, true);
+      const fname = dec.decode(u8.subarray(pos + 46, pos + 46 + fnameLen));
+
+      if (dv.getUint32(localOff, true) === 0x04034b50) {
+        const lNameLen = dv.getUint16(localOff + 26, true);
+        const lExtraLen = dv.getUint16(localOff + 28, true);
+        const dataStart = localOff + 30 + lNameLen + lExtraLen;
+        const compBytes = u8.subarray(dataStart, dataStart + compSize);
+        let raw;
+        if (method === 0) raw = compBytes;
+        else if (method === 8) raw = await inflateRaw(compBytes);
+        else throw new Error(`Unsupported ZIP compression method ${method} in ${fname}`);
+        entries.set(fname, raw);
+      }
+      pos += 46 + fnameLen + extraLen + commentLen;
+    }
+    return entries;
+  }
+
+  function colRefToIndex(ref) {
+    const m = /^([A-Z]+)/i.exec(ref || '');
+    if (!m) return 0;
+    const s = m[1].toUpperCase();
+    let idx = 0;
+    for (let i = 0; i < s.length; i++) idx = idx * 26 + (s.charCodeAt(i) - 64);
+    return idx - 1;
+  }
+
+  async function parseXlsxFile(arrayBuf, filename) {
+    const u8 = new Uint8Array(arrayBuf);
+    if (u8.length >= 8 && u8[0] === 0xD0 && u8[1] === 0xCF && u8[2] === 0x11 && u8[3] === 0xE0) {
+      throw new Error('Old .xls format is not supported. Please open the file in Excel and "Save As" .xlsx, then import again.');
+    }
+    if (filename.toLowerCase().endsWith('.xls') && !(u8[0] === 0x50 && u8[1] === 0x4B)) {
+      throw new Error('Old .xls format is not supported. Please save the workbook as .xlsx and try again.');
+    }
+
+    const entries = await readZipEntries(arrayBuf);
+    const dec = new TextDecoder('utf-8');
+    const parser = new DOMParser();
+
+    const getXml = (path) => {
+      const clean = path.replace(/^\/+/, '');
+      const raw = entries.get(clean);
+      return raw ? parser.parseFromString(dec.decode(raw), 'application/xml') : null;
+    };
+
+    const sharedStrings = [];
+    const ssDoc = getXml('xl/sharedStrings.xml');
+    if (ssDoc) {
+      const sis = ssDoc.getElementsByTagName('si');
+      for (let i = 0; i < sis.length; i++) {
+        const ts = sis[i].getElementsByTagName('t');
+        let txt = '';
+        for (let j = 0; j < ts.length; j++) txt += ts[j].textContent || '';
+        sharedStrings.push(txt);
+      }
+    }
+
+    const wbDoc = getXml('xl/workbook.xml');
+    const relsDoc = getXml('xl/_rels/workbook.xml.rels');
+    if (!wbDoc || !relsDoc) throw new Error('Invalid .xlsx: missing workbook.xml or relationships.');
+
+    const relMap = new Map();
+    const relNodes = relsDoc.getElementsByTagName('Relationship');
+    for (let i = 0; i < relNodes.length; i++) {
+      relMap.set(relNodes[i].getAttribute('Id'), relNodes[i].getAttribute('Target'));
+    }
+
+    const sheetNodes = wbDoc.getElementsByTagName('sheet');
+    if (sheetNodes.length === 0) throw new Error('Workbook contains no worksheets.');
+    let chosenSheet = sheetNodes[0];
+    for (let i = 0; i < sheetNodes.length; i++) {
+      if ((sheetNodes[i].getAttribute('name') || '').trim().toLowerCase() === 'workout') {
+        chosenSheet = sheetNodes[i];
+        break;
+      }
+    }
+    const rId = chosenSheet.getAttribute('r:id') || chosenSheet.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
+    let target = relMap.get(rId) || 'worksheets/sheet1.xml';
+    if (!target.startsWith('xl/') && !target.startsWith('/xl/')) target = 'xl/' + target.replace(/^\/+/, '');
+
+    const wsDoc = getXml(target);
+    if (!wsDoc) throw new Error(`Could not read worksheet ${target}.`);
+
+    const rowEntries = [];
+    let b1Name = '';
+    const rowNodes = wsDoc.getElementsByTagName('row');
+    for (let i = 0; i < rowNodes.length; i++) {
+      const rn = parseInt(rowNodes[i].getAttribute('r'), 10) || (i + 1);
+      const cells = [];
+      const cNodes = rowNodes[i].getElementsByTagName('c');
+      for (let j = 0; j < cNodes.length; j++) {
+        const c = cNodes[j];
+        const ref = c.getAttribute('r') || '';
+        const colIdx = ref ? colRefToIndex(ref) : j;
+        const t = c.getAttribute('t') || '';
+        let val = '';
+        if (t === 's') {
+          const vNode = c.getElementsByTagName('v')[0];
+          const si = vNode ? parseInt(vNode.textContent, 10) : NaN;
+          val = Number.isFinite(si) ? (sharedStrings[si] ?? '') : '';
+        } else if (t === 'inlineStr') {
+          const ts = c.getElementsByTagName('t');
+          for (let k = 0; k < ts.length; k++) val += ts[k].textContent || '';
+        } else if (t === 'str') {
+          const vNode = c.getElementsByTagName('v')[0];
+          val = vNode ? (vNode.textContent || '') : '';
+        } else if (t === 'b') {
+          const vNode = c.getElementsByTagName('v')[0];
+          val = vNode && vNode.textContent === '1' ? 'TRUE' : 'FALSE';
+        } else {
+          const vNode = c.getElementsByTagName('v')[0];
+          if (vNode && vNode.textContent !== '') {
+            const num = Number(vNode.textContent);
+            val = Number.isFinite(num) ? num : vNode.textContent;
+          }
+        }
+        cells[colIdx] = val;
+        if (ref.toUpperCase() === 'B1' && String(val).trim()) b1Name = String(val).trim();
+      }
+      rowEntries.push({ rowNum: rn, cells });
+    }
+
+    return parseTabularWorkout(rowEntries, b1Name || filename.replace(/\.[^.]+$/, ''));
+  }
+
+  function parseCsvText(text, filename) {
+    const clean = text.replace(/^\uFEFF/, '');
+    const lines = clean.split(/\r?\n/);
+    const sampleLines = lines.filter(l => l.trim()).slice(0, 6);
+    const scores = { ',': 0, ';': 0, '\t': 0 };
+    for (const ln of sampleLines) {
+      let inQ = false;
+      for (const ch of ln) {
+        if (ch === '"') inQ = !inQ;
+        else if (!inQ && ch in scores) scores[ch]++;
+      }
+    }
+    let delim = ',';
+    if (scores[';'] > scores[delim]) delim = ';';
+    if (scores['\t'] > scores[delim]) delim = '\t';
+
+    const rowEntries = [];
+    for (let i = 0; i < lines.length; i++) {
+      const ln = lines[i];
+      if (!ln.trim()) continue;
+      const cells = [];
+      let cur = '', inQ = false;
+      for (let j = 0; j < ln.length; j++) {
+        const ch = ln[j];
+        if (inQ) {
+          if (ch === '"' && ln[j + 1] === '"') { cur += '"'; j++; }
+          else if (ch === '"') inQ = false;
+          else cur += ch;
+        } else {
+          if (ch === '"') inQ = true;
+          else if (ch === delim) { cells.push(cur.trim()); cur = ''; }
+          else cur += ch;
+        }
+      }
+      cells.push(cur.trim());
+      rowEntries.push({ rowNum: i + 1, cells });
+    }
+    return parseTabularWorkout(rowEntries, filename.replace(/\.[^.]+$/, ''));
+  }
+
+  function parseTabularWorkout(rowEntries, defaultName) {
+    let headerIdx = -1;
+    let colMap = {};
+    let workoutName = defaultName;
+
+    for (let i = 0; i < Math.min(rowEntries.length, 20); i++) {
+      const cells = rowEntries[i].cells;
+      if (i === 0 && /^workout:?$/i.test(String(cells[0] || '').trim()) && String(cells[1] || '').trim()) {
+        workoutName = String(cells[1]).trim();
+      }
+      const map = {};
+      for (let c = 0; c < cells.length; c++) {
+        const h = String(cells[c] || '').trim().toLowerCase();
+        if (h === 'block' || h === 'block name') map.block = c;
+        else if (h === 'repeat' || h === 'repeats' || h === 'reps') map.repeat = c;
+        else if (h === 'minutes' || h === 'min' || h === 'mins') map.minutes = c;
+        else if (h === 'seconds' || h === 'sec' || h === 'secs') map.seconds = c;
+        else if (h === 'duration' || h === 'dur' || h === 'time') map.duration = c;
+        else if (h === 'mode' || h === 'type') map.mode = c;
+        else if (h === 'target' || h === 'value' || h === 'power' || h === 'watts') map.target = c;
+      }
+      if (map.mode !== undefined && map.target !== undefined && (map.duration !== undefined || map.minutes !== undefined || map.seconds !== undefined)) {
+        headerIdx = i;
+        colMap = map;
+        break;
+      }
+    }
+
+    if (headerIdx < 0) {
+      throw new Error('Could not find header row (expected columns like Mode, Target, and Minutes/Seconds or Duration).');
+    }
+
+    const blocks = [];
+    const warnings = [];
+    let curBlock = null;
+
+    for (let i = headerIdx + 1; i < rowEntries.length; i++) {
+      const { rowNum, cells } = rowEntries[i];
+      const get = (k) => colMap[k] !== undefined ? (cells[colMap[k]] ?? '') : '';
+
+      const rawBlock = String(get('block')).trim();
+      const rawRep = String(get('repeat')).trim();
+      const rawMin = get('minutes');
+      const rawSec = get('seconds');
+      const rawDur = get('duration');
+      const rawMode = String(get('mode')).trim();
+      const rawTarget = get('target');
+
+      if (!rawBlock && !rawRep && !rawMode && String(rawTarget).trim() === '' && String(rawMin).trim() === '' && String(rawSec).trim() === '' && String(rawDur).trim() === '') {
+        continue;
+      }
+
+      const mode = normalizeMode(rawMode);
+      if (!mode) {
+        warnings.push(`Row ${rowNum}: skipped — unrecognized mode "${rawMode}".`);
+        continue;
+      }
+
+      let dur = NaN;
+      if (colMap.duration !== undefined && String(rawDur).trim() !== '') {
+        if (typeof rawDur === 'number' && rawDur > 0 && rawDur < 1) dur = Math.round(rawDur * 86400);
+        else dur = parseDurInput(rawDur);
+      } else {
+        const m = String(rawMin).trim() === '' ? 0 : Number(rawMin);
+        const s = String(rawSec).trim() === '' ? 0 : Number(rawSec);
+        if (Number.isFinite(m) && Number.isFinite(s)) dur = Math.round(m * 60 + s);
+      }
+
+      if (!Number.isFinite(dur) || dur <= 0) {
+        warnings.push(`Row ${rowNum}: skipped — invalid duration.`);
+        continue;
+      }
+
+      const tgtNum = Number(String(rawTarget).replace(/[wW%\s]/g, ''));
+      if (String(rawTarget).trim() === '' || !Number.isFinite(tgtNum)) {
+        warnings.push(`Row ${rowNum}: skipped — invalid target "${rawTarget}".`);
+        continue;
+      }
+      const cl = clampTargetForMode(mode, tgtNum);
+      if (cl.clamped) {
+        warnings.push(`Row ${rowNum}: target ${tgtNum} limited to ${cl.value}${mode === 'erg' ? ' W' : '%'}.`);
+      }
+
+      let repVal = null;
+      if (rawRep !== '') {
+        const rn = parseInt(rawRep, 10);
+        if (Number.isFinite(rn) && rn >= 1 && rn <= 99) repVal = rn;
+        else {
+          repVal = clamp(Number.isFinite(rn) ? rn : 1, 1, 99);
+          warnings.push(`Row ${rowNum}: repeat "${rawRep}" limited to ${repVal}.`);
+        }
+      }
+
+      const startsNewBlock = !curBlock || repVal !== null || (rawBlock !== '' && rawBlock !== curBlock.name);
+      if (startsNewBlock) {
+        curBlock = { name: rawBlock || `Block ${blocks.length + 1}`, repeat: repVal !== null ? repVal : 1, steps: [] };
+        blocks.push(curBlock);
+      }
+      curBlock.steps.push({ dur, mode, target: cl.value });
+    }
+
+    if (blocks.length === 0) throw new Error('No valid workout rows found in file.');
+    return { workout: { name: workoutName || 'Imported Workout', blocks }, warnings };
+  }
+
+  function showImportReport(title, items = [], level = '') {
+    const box = $('wkImportReport');
+    box.className = `wk-import-report show ${level}`;
+    if (!items.length) box.innerHTML = `<strong>${escHtml(title)}</strong>`;
+    else box.innerHTML = `<strong>${escHtml(title)}</strong><ul>${items.map(x => `<li>${escHtml(x)}</li>`).join('')}</ul>`;
+  }
+
+  async function handleWorkoutImportFile(file) {
+    if (!file) return;
+    const lower = file.name.toLowerCase();
+    try {
+      let result;
+      if (lower.endsWith('.json')) result = validateWorkoutJson(JSON.parse(await file.text()));
+      else if (lower.endsWith('.csv') || lower.endsWith('.tsv') || lower.endsWith('.txt')) result = parseCsvText(await file.text(), file.name);
+      else if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) result = await parseXlsxFile(await file.arrayBuffer(), file.name);
+      else throw new Error('Unsupported file type. Use .xlsx, .csv, or .json.');
+
+      state.workout = result.workout;
+      recomputePlan(true);
+      renderWorkoutBuilder();
+      if (result.warnings.length > 0) {
+        showImportReport(`Imported "${state.workout.name}" with ${result.warnings.length} warning(s):`, result.warnings, 'warn');
+        log(`Imported "${state.workout.name}" (${result.warnings.length} warnings).`, 'warn');
+      } else {
+        showImportReport(`Imported "${state.workout.name}" (${state.flatPlan.length} steps, ${fmtTime(state.player.totalDuration)}).`, [], '');
+        log(`Imported "${state.workout.name}".`, 'ok');
+      }
+    } catch (err) {
+      showImportReport(`Import failed: ${err.message || err}`, [], 'err');
+      log(`Workout import failed: ${err.message || err}`, 'err');
+    }
+  }
+
+  /* =========================================================================
+   * 18. SETTINGS PERSISTENCE & VALIDATION
+   * ========================================================================= */
+  function loadSettings() {
+    const ftp = parseInt(localStorage.getItem(LS.FTP), 10);
+    if (Number.isFinite(ftp) && ftp >= 50 && ftp <= 600) state.ftp = ftp;
+
+    const wt = parseFloat(localStorage.getItem(LS.WEIGHT));
+    if (Number.isFinite(wt) && wt >= 30 && wt <= 200) state.riderWeight = wt;
+
+    const mhr = parseInt(localStorage.getItem(LS.MAX_HR), 10);
+    if (Number.isFinite(mhr) && mhr >= 100 && mhr <= 230) state.maxHr = mhr;
+
+    const ac = localStorage.getItem(LS.AUTO_CONNECT);
+    if (ac !== null) state.autoConnect = ac === '1';
+
+    const ap = localStorage.getItem(LS.AUTO_PAUSE);
+    if (ap !== null) state.autoPause = ap === '1';
+
+    const bp = localStorage.getItem(LS.BEEPS);
+    if (bp !== null) state.beeps = bp === '1';
+
+    $('inpFtp').value = state.ftp;
+    $('inpRiderWeight').value = state.riderWeight;
+    $('simRiderWeight').value = state.riderWeight;
+    $('inpMaxHr').value = state.maxHr;
+    $('chkAutoConnect').checked = state.autoConnect;
+    $('chkAutoPause').checked = state.autoPause;
+    $('chkBeeps').checked = state.beeps;
+  }
+
+  function updateRiderWeight(rawVal, fromSlope = false) {
+    const v = parseFloat(rawVal);
+    if (!Number.isFinite(v) || v < 30 || v > 200) {
+      $('errRiderWeight').textContent = 'Rider weight must be between 30 and 200 kg';
+      $('inpRiderWeight').value = state.riderWeight;
+      $('simRiderWeight').value = state.riderWeight;
+      return;
+    }
+    $('errRiderWeight').textContent = '';
+    state.riderWeight = Math.round(v * 10) / 10;
+    localStorage.setItem(LS.WEIGHT, String(state.riderWeight));
+    $('inpRiderWeight').value = state.riderWeight;
+    $('simRiderWeight').value = state.riderWeight;
+    updateErgMeta();
+    renderTiles();
+    if (state.trainerDriver && (state.trainerProtocol === 'FE-C' || state.mode === 'sim' || fromSlope)) {
+      if (state.mode === 'sim') scheduleSendControl();
+      else if (state.trainerProtocol === 'FE-C') {
+        state.trainerDriver.setSlope({
+          grade: state.simGrade,
+          wind: state.simWind,
+          crr: state.simCrr,
+          cw: state.simCw,
+          riderWeight: state.riderWeight,
+          bikeWeight: state.simBikeWeight,
+        }).catch(() => {});
+      }
+    }
+  }
+
+  /* =========================================================================
+   * 19. EVENT WIRING
+   * ========================================================================= */
+  function wireEvents() {
+    $('btnHeaderConnect').onclick = async () => {
+      if (state.trainerState === 'connected' || state.trainerState === 'connecting') return;
+      const def = getDefaultSaved('trainer');
+      if (def) {
+        await connectSavedTrainer(def);
+      } else if (state.transport === 'bridge') {
+        await startBridgeScan();
+      } else if (state.transport === 'webble') {
+        try {
+          const dev = await requestWebBleTrainer();
+          await connectTrainerDevice(dev);
+        } catch (err) {
+          if (!String(err).includes('cancelled') && !String(err).includes('canceled')) {
+            log(`Connect error: ${err.message || err}`, 'err');
+          }
+        }
+      } else {
+        showBanner('No Bluetooth transport available. Run flux_bridge.py or try Demo mode.', 'warn');
+      }
+    };
+
+    $('btnDemo').onclick = () => startDemoMode();
+    $('btnDisconnect').onclick = () => disconnectTrainer(true);
+
+    $('btnSearchDevices').onclick = async () => {
+      if (state.transport === 'bridge') {
+        await startBridgeScan();
+      } else if (state.transport === 'webble') {
+        try {
+          const dev = await requestWebBleTrainer();
+          await connectTrainerDevice(dev);
+        } catch (err) {
+          if (!String(err).includes('cancelled') && !String(err).includes('canceled')) {
+            log(`Web Bluetooth picker error: ${err.message || err}`, 'err');
+          }
+        }
+      } else {
+        showBanner('No Bluetooth transport available. Start flux_bridge.py or open in Chrome/Edge.', 'warn');
+      }
+    };
+
+    $('btnScanStop').onclick = () => stopBridgeScan(true);
+    $('chkTrainersOnly').onchange = () => renderScanList();
+    $('btnStopBridge').onclick = () => stopBridgeFlow();
+
+    $('btnSearchHr').onclick = async () => {
+      if (state.transport === 'bridge') {
+        await startBridgeScan();
+      } else if (state.transport === 'webble') {
+        try {
+          const dev = await requestWebBleHr();
+          await connectHrDevice(dev);
+        } catch (err) {
+          if (!String(err).includes('cancelled') && !String(err).includes('canceled')) {
+            log(`HR search error: ${err.message || err}`, 'err');
+          }
+        }
+      } else {
+        showBanner('No Bluetooth transport available for HR search.', 'warn');
+      }
+    };
+    $('btnDisconnectHr').onclick = () => disconnectHr();
+
+    $('chkAutoConnect').onchange = (e) => {
+      state.autoConnect = e.target.checked;
+      localStorage.setItem(LS.AUTO_CONNECT, state.autoConnect ? '1' : '0');
+    };
+
+    document.querySelectorAll('.mode-tab').forEach(btn => {
+      btn.onclick = () => switchMode(btn.dataset.mode, true);
+    });
+
+    $('ergSlider').oninput = (e) => {
+      state.ergTarget = clamp(parseInt(e.target.value, 10) || 0, 0, 1500);
+      syncControlInputs();
+      scheduleSendControl();
+    };
+    $('ergInput').onchange = (e) => {
+      state.ergTarget = clamp(parseInt(e.target.value, 10) || 0, 0, 1500);
+      syncControlInputs();
+      scheduleSendControl();
+    };
+
+    $('simSlider').oninput = (e) => {
+      state.simGrade = Math.round(clamp(parseFloat(e.target.value) || 0, -10, 15) * 10) / 10;
+      syncControlInputs();
+      scheduleSendControl();
+    };
+    $('simInput').onchange = (e) => {
+      state.simGrade = Math.round(clamp(parseFloat(e.target.value) || 0, -10, 15) * 10) / 10;
+      syncControlInputs();
+      scheduleSendControl();
+    };
+    $('simWind').onchange = (e) => { state.simWind = clamp(parseFloat(e.target.value) || 0, -30, 30); scheduleSendControl(); };
+    $('simCrr').onchange = (e) => { state.simCrr = clamp(parseFloat(e.target.value) || 0.004, 0.001, 0.025); scheduleSendControl(); };
+    $('simCw').onchange = (e) => { state.simCw = clamp(parseFloat(e.target.value) || 0.51, 0.1, 2.5); scheduleSendControl(); };
+    $('simBikeWeight').onchange = (e) => { state.simBikeWeight = clamp(parseFloat(e.target.value) || 9, 3, 30); scheduleSendControl(); };
+    $('simRiderWeight').onchange = (e) => updateRiderWeight(e.target.value, true);
+
+    $('resSlider').oninput = (e) => {
+      state.resTarget = clamp(parseInt(e.target.value, 10) || 0, 0, 100);
+      syncControlInputs();
+      scheduleSendControl();
+    };
+    $('resInput').onchange = (e) => {
+      state.resTarget = clamp(parseInt(e.target.value, 10) || 0, 0, 100);
+      syncControlInputs();
+      scheduleSendControl();
+    };
+
+    document.querySelectorAll('button[data-adj]').forEach(btn => {
+      btn.onclick = () => {
+        const mode = btn.dataset.adj;
+        const d = parseFloat(btn.dataset.delta);
+        if (mode === 'erg') state.ergTarget = clamp(state.ergTarget + d, 0, 1500);
+        else if (mode === 'sim') state.simGrade = Math.round(clamp(state.simGrade + d, -10, 15) * 10) / 10;
+        else state.resTarget = clamp(state.resTarget + d, 0, 100);
+        syncControlInputs();
+        scheduleSendControl();
+      };
+    });
+
+    document.addEventListener('keydown', (e) => {
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
+      if (e.key === 'ArrowUp') { e.preventDefault(); adjustActiveValue(1, e.shiftKey); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); adjustActiveValue(-1, e.shiftKey); }
+      else if (e.key === '1') switchMode('erg', true);
+      else if (e.key === '2') switchMode('sim', true);
+      else if (e.key === '3') switchMode('res', true);
+    });
+
+    $('btnRecToggle').onclick = () => { if (state.recording) pauseRecording(); else startRecording(); };
+    $('btnRecReset').onclick = () => resetSession();
+    $('btnExportCsv').onclick = () => exportCsv();
+    $('chkAutoPause').onchange = (e) => {
+      state.autoPause = e.target.checked;
+      localStorage.setItem(LS.AUTO_PAUSE, state.autoPause ? '1' : '0');
+    };
+
+    $('inpFtp').onchange = (e) => {
+      const v = parseInt(e.target.value, 10);
+      if (!Number.isFinite(v) || v < 50 || v > 600) {
+        $('errFtp').textContent = 'FTP must be between 50 and 600 W';
+        e.target.value = state.ftp;
+        return;
+      }
+      $('errFtp').textContent = '';
+      state.ftp = v;
+      localStorage.setItem(LS.FTP, String(v));
+      updateErgMeta();
+      renderTiles();
+      drawProfileChart();
+    };
+
+    $('inpRiderWeight').onchange = (e) => updateRiderWeight(e.target.value, false);
+
+    $('inpMaxHr').onchange = (e) => {
+      const v = parseInt(e.target.value, 10);
+      if (!Number.isFinite(v) || v < 100 || v > 230) {
+        $('errMaxHr').textContent = 'Max HR must be between 100 and 230 bpm';
+        e.target.value = state.maxHr;
+        return;
+      }
+      $('errMaxHr').textContent = '';
+      state.maxHr = v;
+      localStorage.setItem(LS.MAX_HR, String(v));
+      renderTiles();
+    };
+
+    $('chartWindowSelect').onchange = (e) => {
+      state.chartWindowSec = parseInt(e.target.value, 10) || 180;
+      drawTelemetryChart();
+    };
+
+    $('wkNameInput').oninput = (e) => { state.workout.name = e.target.value; recomputePlan(false); };
+    $('btnAddBlock').onclick = () => {
+      state.workout.blocks.push({ name: `Block ${state.workout.blocks.length + 1}`, repeat: 1, steps: [{ dur: 120, mode: 'erg', target: 180 }] });
+      recomputePlan(true);
+      renderWorkoutBuilder();
+    };
+
+    $('btnPlStart').onclick = () => startWorkout();
+    $('btnPlPause').onclick = () => pauseWorkout();
+    $('btnPlBack').onclick = () => backWorkoutStep();
+    $('btnPlSkip').onclick = () => skipWorkoutStep();
+    $('btnPlStop').onclick = () => stopWorkout();
+    $('chkBeeps').onchange = (e) => {
+      state.beeps = e.target.checked;
+      localStorage.setItem(LS.BEEPS, state.beeps ? '1' : '0');
+    };
+
+    $('btnWkSave').onclick = () => {
+      const name = (state.workout.name || '').trim();
+      if (!name) { log('Enter a workout name before saving.', 'warn'); return; }
+      const lib = loadWorkoutLibrary();
+      lib[name] = JSON.parse(JSON.stringify(state.workout));
+      saveWorkoutLibrary(lib);
+      log(`Saved workout "${name}".`, 'ok');
+    };
+    $('wkLibrarySelect').onchange = (e) => {
+      const name = e.target.value;
+      if (!name) return;
+      const lib = loadWorkoutLibrary();
+      if (lib[name]) {
+        state.workout = JSON.parse(JSON.stringify(lib[name]));
+        recomputePlan(true);
+        renderWorkoutBuilder();
+        log(`Loaded workout "${name}".`);
+      }
+    };
+    $('btnWkDelete').onclick = () => {
+      const name = $('wkLibrarySelect').value || state.workout.name;
+      const lib = loadWorkoutLibrary();
+      if (lib[name]) {
+        delete lib[name];
+        saveWorkoutLibrary(lib);
+        log(`Deleted workout "${name}".`);
+      }
+    };
+    $('btnWkNew').onclick = () => {
+      if (state.player.active) stopWorkout();
+      state.workout = { name: 'New Workout', blocks: [{ name: 'Main Set', repeat: 1, steps: [{ dur: 300, mode: 'erg', target: 150 }] }] };
+      recomputePlan(false);
+      renderWorkoutBuilder();
+    };
+    $('btnWkExportJson').onclick = () => {
+      const safe = (state.workout.name || 'workout').replace(/[^a-z0-9\-_ ]+/gi, '_').trim() || 'workout';
+      downloadBlob(new Blob([JSON.stringify(state.workout, null, 2)], { type: 'application/json' }), `${safe}.json`);
+      log(`Exported ${safe}.json`, 'ok');
+    };
+    $('btnWkExportXlsx').onclick = () => exportWorkoutXlsx(state.workout);
+    $('btnWkImport').onclick = () => { $('wkImportFile').value = ''; $('wkImportFile').click(); };
+    $('wkImportFile').onchange = (e) => handleWorkoutImportFile(e.target.files[0]);
+
+    $('btnClearLog').onclick = () => { $('logBox').innerHTML = ''; };
+
+    window.addEventListener('resize', () => {
+      drawTelemetryChart();
+      drawProfileChart();
+    });
+  }
+
+  /* =========================================================================
+   * 20. BOOTSTRAP
+   * ========================================================================= */
+  function init() {
+    loadSettings();
+    syncControlInputs();
+
+    let loadedWk = null;
+    try {
+      const savedLast = localStorage.getItem(LS.LAST_WK);
+      if (savedLast) loadedWk = validateWorkoutJson(JSON.parse(savedLast)).workout;
+    } catch (_) {}
+    state.workout = loadedWk || createSampleWorkout();
+
+    renderLibrarySelect();
+    recomputePlan(false);
+    renderWorkoutBuilder();
+    wireEvents();
+    renderTiles();
+    drawTelemetryChart();
+    drawProfileChart();
+
+    setInterval(tick1Hz, 1000);
+    initTransport();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
