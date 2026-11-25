@@ -625,10 +625,12 @@ async function run() {
       await sleep(300);
       assert.notEqual(await browser.eval(() => document.getElementById('vHr').textContent), '199');
 
-      // Switch to ❤ HR Control Mode (target 135 bpm, current HR 175 bpm -> closed-loop lowers ERG watts!)
+      // Switch to ❤ HR Control Mode -> verify initial ERG target sent to trainer
+      bridge.writes.length = 0;
       bridge.pushNotify(HR_ADDR, HR_MEAS, [0x06, 165]);
       await browser.eval(() => document.querySelector('.tabs button[data-mode="hr"]').click());
       assert.equal(await browser.eval(() => document.getElementById('panel-hr').classList.contains('active')), true);
+      await waitUntil(() => bridge.writes.some(w => w.uuid === FTMS_CP && w.bytes[0] === 0x05), 2500, 'HR Control sends initial FTMS 0x05 ERG');
       await browser.eval(() => document.querySelector('.tabs button[data-mode="erg"]').click());
 
       // Unexpected HR drop -> auto-reconnects
@@ -758,24 +760,37 @@ async function run() {
     // 9. Workout Builder, Ride View, Player Controls & Disk Library Save/Load/Delete
     await test('9. Workout builder, Ride View (F/Esc), player controls & bridge workout CRUD', async () => {
       await browser.eval(() => document.getElementById('woNew').click());
+      // Verify ERG % FTP toggle converts 150 W <-> 75 % (at 200 W FTP)
+      await browser.eval(() => { const p = document.getElementById('woPct'); p.checked = true; p.dispatchEvent(new Event('change')); });
+      assert.equal(await browser.eval(() => document.querySelector('#blocks input.starget').value), '75');
+      await browser.eval(() => { const p = document.getElementById('woPct'); p.checked = false; p.dispatchEvent(new Event('change')); });
+      assert.equal(await browser.eval(() => document.querySelector('#blocks input.starget').value), '150');
+
       await browser.eval(() => {
         const n = document.getElementById('woName'); n.value = 'E2E Intervals'; n.dispatchEvent(new Event('change'));
         document.getElementById('woSave').click();
       });
       await waitUntil(() => bridge.workouts.has('E2E Intervals'), 2500, 'Workout saved to bridge');
 
-      // Start workout, open & exit Ride View via F / Esc, Pause, Skip, Back, Stop
+      // Start workout, open & exit Ride View via F / Esc + Numpad0, Pause, and NumpadDecimal double-press Stop
       await browser.eval(() => document.getElementById('woStart').click());
       await browser.waitFor(() => !document.getElementById('woPause').disabled, 2000, 'Workout active');
       await browser.eval(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', bubbles: true })));
       assert.equal(await browser.eval(() => document.getElementById('rideView').hidden), false, 'Ride View must open on F');
       await browser.eval(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
       assert.equal(await browser.eval(() => document.getElementById('rideView').hidden), true, 'Ride View must close on Esc');
+      await browser.eval(() => document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Numpad0', key: '0', bubbles: true })));
+      assert.equal(await browser.eval(() => document.getElementById('rideView').hidden), false, 'Ride View must open on Numpad0');
+      await browser.eval(() => document.dispatchEvent(new KeyboardEvent('keydown', { code: 'Numpad0', key: '0', bubbles: true })));
+      assert.equal(await browser.eval(() => document.getElementById('rideView').hidden), true, 'Ride View must close on Numpad0');
 
       await browser.eval(() => document.getElementById('woPause').click());
       assert.ok((await browser.eval(() => document.getElementById('woPause').textContent)).includes('Resume'));
       await browser.eval(() => document.getElementById('woPause').click());
-      await browser.eval(() => document.getElementById('woStop').click());
+      // Double-press NumpadDecimal stops workout without confirmation dialog
+      await browser.eval(() => document.dispatchEvent(new KeyboardEvent('keydown', { code: 'NumpadDecimal', key: '.', bubbles: true })));
+      await browser.eval(() => document.dispatchEvent(new KeyboardEvent('keydown', { code: 'NumpadDecimal', key: '.', bubbles: true })));
+      await browser.waitFor(() => document.getElementById('woStop').disabled, 2000, 'Workout stopped via Numpad . .');
 
       // Delete saved workout from bridge
       await browser.eval(() => { const s = document.getElementById('woLib'); s.value = 'E2E Intervals'; s.dispatchEvent(new Event('change')); });
@@ -806,9 +821,26 @@ async function run() {
       bridge.ops.length = 0;
       await browser.eval(() => document.getElementById('btnSettings').click());
       await browser.waitFor(() => !document.getElementById('setModal').hidden, 2000, 'Settings modal open');
-      await browser.eval(() => document.getElementById('setSave').click());
-      await waitUntil(() => bridge.ops.some(o => o.op === 'configSave'), 2500, 'configSave op sent');
+
+      // Invalid FTP (999) must be rejected without closing modal or writing config
+      await browser.eval(() => {
+        const inp = document.querySelector('#setPane input[data-path="ftp"]');
+        inp.value = '999'; inp.dispatchEvent(new Event('input', { bubbles: true }));
+        document.getElementById('setSave').click();
+      });
+      assert.equal(await browser.eval(() => document.getElementById('setModal').hidden), false, 'Modal stays open on invalid FTP');
+      assert.ok((await browser.eval(() => document.getElementById('setMsg').textContent)).includes('Not saved'), 'Shows validation error');
+
+      // Valid FTP (250) saves to bridge and updates main UI, then restore 200
+      await browser.eval(() => {
+        const inp = document.querySelector('#setPane input[data-path="ftp"]');
+        inp.value = '250'; inp.dispatchEvent(new Event('input', { bubbles: true }));
+        document.getElementById('setSave').click();
+      });
+      await waitUntil(() => bridge.ops.some(o => o.op === 'configSave' && o.config?.ftp === 250), 2500, 'configSave with FTP 250');
       await browser.waitFor(() => document.getElementById('setModal').hidden, 2000, 'Settings modal closed');
+      assert.equal(await browser.eval(() => document.getElementById('ftp').value), '250');
+      await browser.eval(() => { const f = document.getElementById('ftp'); f.value = '200'; f.dispatchEvent(new Event('change')); });
     });
 
     // 12. Session Recording, End Ride, Rides History Modal, CSV & Binary FIT Export (CRC-16 Verified!)
@@ -896,6 +928,22 @@ with zipfile.ZipFile(dst, 'w', compression=zipfile.ZIP_DEFLATED) as zout:
       fs.writeFileSync(jsonPath, JSON.stringify({ name: 'JSON Tempo', blocks: [{ name: 'Tempo', repeat: 2, steps: [{ dur: 60, mode: 'erg', target: 220 }] }] }));
       await browser.uploadFile('#woFile', jsonPath);
       await browser.waitFor(() => document.getElementById('woName').value === 'JSON Tempo', 3000, 'JSON imported');
+
+      // Old binary .xls file must be rejected cleanly with guidance, keeping current workout intact
+      browser.dialogs.length = 0;
+      const xlsPath = path.join(tmpDir, 'legacy.xls');
+      fs.writeFileSync(xlsPath, Buffer.from([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]));
+      await browser.uploadFile('#woFile', xlsPath);
+      await waitUntil(() => browser.dialogs.some(d => d.toLowerCase().includes('.xls')), 2500, 'Old .xls rejection alert');
+      assert.equal(await browser.eval(() => document.getElementById('woName').value), 'JSON Tempo');
+
+      // Malformed JSON file must be rejected cleanly, keeping current workout intact
+      browser.dialogs.length = 0;
+      const badJsonPath = path.join(tmpDir, 'broken.json');
+      fs.writeFileSync(badJsonPath, '{"name": "Broken", "blocks": [');
+      await browser.uploadFile('#woFile', badJsonPath);
+      await waitUntil(() => browser.dialogs.some(d => d.toLowerCase().includes('could not import')), 2500, 'Invalid JSON rejection alert');
+      assert.equal(await browser.eval(() => document.getElementById('woName').value), 'JSON Tempo');
     });
 
     // 14. Stop Bridge Flow + 3 s Restart Polling

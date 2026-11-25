@@ -379,6 +379,7 @@ def _install_aiohttp_shim_if_needed():
                     self._writer.write(b"\x88\x00")
                     await self._writer.drain()
                     self._writer.close()
+                    await self._writer.wait_closed()
                 except Exception:
                     pass
 
@@ -858,6 +859,65 @@ class TestFluxBridgeV8E2E(unittest.TestCase):
             self.assertFalse(r_fail["ok"])
             self.assertIn("timed out", r_fail["error"])
             self.assertIn("-63 dBm", r_fail["error"])
+        finally:
+            ws.close()
+
+    def test_cancel_connect_filename_collisions_and_ride_id_security(self):
+        ws = self._connect_ws()
+        try:
+            ws.request("hello", 1, claim="takeover")
+
+            # 1. Path traversal / invalid ride_id must be rejected on both rideAppend & rideLoad
+            for bad_id in ("../escape", "a/b", "ride with spaces", ""):
+                r1, _ = ws.request("rideAppend", 10, ride=bad_id, lines=["0,100"])
+                self.assertFalse(r1["ok"])
+                self.assertIn("invalid ride id", r1["error"])
+                r2, _ = ws.request("rideLoad", 11, ride=bad_id)
+                self.assertFalse(r2["ok"])
+                self.assertIn("invalid ride id", r2["error"])
+
+            # 2. Workout filename collision (different names sanitizing to same stem)
+            w1, _ = ws.request("workoutSave", 12, workout={"name": "Sprint/1", "blocks": []})
+            w2, _ = ws.request("workoutSave", 13, workout={"name": "Sprint:1", "blocks": []})
+            self.assertTrue(w1["ok"] and w2["ok"])
+            self.assertNotEqual(w1["file"], w2["file"])
+            lst, _ = ws.request("workoutList", 14)
+            self.assertEqual(set(lst["workouts"]), {"Sprint/1", "Sprint:1"})
+            loaded2, _ = ws.request("workoutLoad", 15, name="Sprint:1")
+            self.assertEqual(loaded2["workout"]["name"], "Sprint:1")
+
+            # 3. In-flight connect cancelled cleanly by disconnect
+            slow_addr = "AA:BB:CC:DD:EE:99"
+            FAKE_BLE.devices[slow_addr] = (
+                FakeBLEDevice(slow_addr, "Slow Trainer"),
+                FakeAdvData("Slow Trainer", -70, [flux_bridge.FTMS_SVC]),
+                FAKE_BLE.devices[self.trainer_addr][2],
+            )
+            orig_connect = FakeBleakClient.connect
+
+            async def slow_connect(cli):
+                await asyncio.sleep(5)
+                return await orig_connect(cli)
+
+            FakeBleakClient.connect = slow_connect
+            try:
+                ws.send_json({"id": 20, "op": "connect", "address": slow_addr})
+                # Wait briefly so connect enters awaiting slow_connect
+                time.sleep(0.15)
+                ws.send_json({"id": 21, "op": "disconnect", "address": slow_addr})
+                replies = {}
+                deadline = time.time() + 4
+                while len(replies) < 2 and time.time() < deadline:
+                    m = ws.recv_json(timeout=2)
+                    if "id" in m:
+                        replies[m["id"]] = m
+                self.assertIn(20, replies)
+                self.assertIn(21, replies)
+                self.assertFalse(replies[20]["ok"])
+                self.assertIn("cancelled", replies[20]["error"])
+                self.assertTrue(replies[21]["ok"])
+            finally:
+                FakeBleakClient.connect = orig_connect
         finally:
             ws.close()
 
