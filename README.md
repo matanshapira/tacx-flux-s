@@ -62,3 +62,15 @@ Built with plain HTML/CSS/JavaScript (no external dependencies or libraries) and
 - `flux-s.html`: Single-file web app (GUI, telemetry charts, workout player, XLSX generator/parser).
 - `flux_bridge.py`: Local WebSocket BLE bridge using `bleak` and `aiohttp`.
 - `Start Flux S GUI.bat`: One-click Windows starter script.
+- `tests/`: Independent local end-to-end test suite (`test_bridge.py` + headless Chrome `e2e_browser.mjs`).
+
+---
+
+## Running Local E2E Tests
+
+Run the full zero-dependency Python bridge + real headless Chrome E2E suite:
+
+```bash
+./tests/run_all.sh
+```
+
